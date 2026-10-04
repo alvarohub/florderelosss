@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>myBlobChain</title>
+    <link rel="icon" href="data:," />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+      }
+      #sketch {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+      }
+      #sketch canvas {
+        display: block;
+      }
+      .hint,
+      .hud {
+        position: fixed;
+        left: 14px;
+        bottom: 12px;
+        z-index: 10;
+        font:
+          12px/1.7 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+        color: #8a93a3;
+        pointer-events: none;
+        user-select: none;
+      }
+      .hint {
+        transition: opacity 1.2s ease;
+      }
+      .hud {
+        display: none;
+        white-space: pre;
+        background: rgba(8, 10, 14, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 8px;
+        padding: 10px 14px;
+        color: #aab3c2;
+      }
+      .hud.on {
+        display: block;
+      }
+      #fatal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        place-items: center;
+        z-index: 20;
+        color: #ff7a7a;
+        font:
+          13px/1.6 ui-monospace,
+          Menlo,
+          monospace;
+        text-align: center;
+        white-space: pre-wrap;
+        padding: 30px;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="sketch"></div>
+    <div class="hint" id="hint">move the cursor &middot; h &mdash; controls</div>
+    <div class="hud" id="hud"></div>
+    <div id="fatal"></div>
+
+    <!-- vendored libraries (pinned; see README) -->
+    <script src="vendor/p5.min.js"></script>
+    <script src="vendor/toxiclibs.min.js"></script>
+
+    <!-- the sketch -->
+    <script src="js/blobchain.js"></script>
+  </body>
+</html>
