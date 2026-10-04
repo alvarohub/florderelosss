@@ -8,6 +8,9 @@ glow trail plus a crisp core. In **anchor-capture mode** (`a`), the letters
 rebuild themselves — every anchor pulls its own particle in once it drifts
 close enough (see below).
 
+**Live:** https://alvarohub.github.io/myBlobChain_web/ — GitHub Pages ·
+source: https://github.com/alvarohub/myBlobChain_web
+
 ## Run locally
 
     python3 -m http.server 8000
@@ -22,27 +25,29 @@ Push this folder to a repo (keep `index.html`, `js/`, `vendor/`, `fonts/`,
 
 ## Controls
 
-| key       | action                                                         |
-| --------- | -------------------------------------------------------------- |
-| `0`       | reset positions + clear trail                                  |
-| `space`   | toggle attract-to-origin                                       |
-| `a`       | attraction source: cursor lens ↔ anchor capture (see below)    |
-| `c`       | show/hide system cursor (hidden by default, like the original) |
-| `m`       | temporal modulation of springs & repulsion                     |
-| `l`       | enzyme lens on/off                                             |
-| `r`       | lens ring on/off                                               |
-| `1`       | outline-springs debug overlay                                  |
-| `2`       | origin-springs debug overlay                                   |
-| `[` `]`   | trail fade −/+                                                 |
-| `,` `.`   | visual smoothing −/+                                           |
+| key       | action                                                                             |
+| --------- | ---------------------------------------------------------------------------------- |
+| `0`       | reset positions + clear trail                                                      |
+| `space`   | toggle attract-to-origin                                                           |
+| `a`       | attraction source: cursor lens ↔ anchor capture (see below)                        |
+| `c`       | show/hide system cursor (hidden by default, like the original)                     |
+| `m`       | temporal modulation of springs & repulsion                                         |
+| `l`       | enzyme lens on/off                                                                 |
+| `r`       | lens ring on/off                                                                   |
+| `1`       | outline-springs debug overlay                                                      |
+| `2`       | origin-springs debug overlay                                                       |
+| `[` `]`   | trail fade −/+                                                                     |
+| `,` `.`   | visual smoothing −/+                                                               |
+| `b`       | particle beads on/off — a dot on every particle; pulled ones light up              |
 | `t`       | cycle bundled fonts (Shrikhand → Pacifico → Rubik Bubbles → Chewy → Archivo Black) |
-| `f`       | fullscreen                                                     |
-| `h` / `?` | help panel                                                     |
+| `f`       | fullscreen                                                                         |
+| `h` / `?` | help panel                                                                         |
 
 URL params: `?text=hello%20world` (replaces the text) · `?anchors` (start in
 anchor-capture mode) · `?capture=NN` (capture radius in px) · `?font=name`
-(pick a bundled font at start, prefix match — `?font=pac`) · `?slow` (runs the
-raw toxiclibs.js solver — for comparison).
+(pick a bundled font at start, prefix match — `?font=pac`) · `?beads=0` (hide
+the particle beads — on by default) · `?slow` (runs the raw toxiclibs.js
+solver — for comparison).
 
 ## Anchor-capture mode (key `a`)
 
@@ -54,7 +59,10 @@ through the outline springs into range of _their_ anchors, and the chain
 (`?anchors` starts in it; `?capture=NN` sets the radius — smaller = more
 selective and rarer rebuilds, larger = even far-drifted contours get
 re-captured). While active, `r` shows the _capture front_ (anchors
-mid-transition) instead of the lens ring.
+mid-transition) instead of the lens ring. With the particle beads on (key
+`b`, default), the rebuild is legible bead-by-bead: each pulled particle
+heats from dark to white the moment the enzyme grabs it, and you can watch
+the pull travelling along the chain.
 
 Measured with `tools/capture-demo.js` (node; same event cadence as the page):
 
@@ -150,9 +158,11 @@ wider than the stage.
 - Key `1` (`renderOutlineSprings`) was toggled but never rendered in the
   original — here it actually draws the debug overlay (default off, so the
   default look matches the original).
-- Web additions: `f` fullscreen, `h` help, `t` font cycling, `?text=`, `?slow`,
-  `?font=`, letterboxed responsive scaling (the stage stays 1600×720 logical;
-  DPR-independent).
+- Web additions: `f` fullscreen, `h` help, `t` font cycling, `b` particle
+  beads (dark dots on every particle; the ones being pulled heat up to white,
+  so the pull is visible as it travels along the chain), `?text=`, `?slow`,
+  `?font=`, `?beads=0`, letterboxed responsive scaling (the stage stays
+  1600×720 logical; DPR-independent).
 - `vendor/opentype.min.js` is **not** loaded by the page (p5 bundles opentype);
   it is used by `tools/validate.js` and kept for reference.
 

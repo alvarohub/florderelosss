@@ -58,15 +58,16 @@
  *   - key '1' (`renderOutlineSprings`) was toggled but never rendered in the
  *     .pde — here it actually draws the outline-spring debug overlay (default
  *     off, so the look matches the original).
- *   - additions: 'h' help panel, 'f' fullscreen, 't' cycles the bundled fonts
- *     (Shrikhand -> Pacifico -> Rubik Bubbles -> Chewy -> Archivo Black),
+ *   - additions: 'h' help panel, 'f' fullscreen, 'b' particle "beads"
+ *     (dots on every particle; pulled ones light up), 't' cycles the bundled
+ *     fonts (Shrikhand -> Pacifico -> Rubik Bubbles -> Chewy -> Archivo Black),
  *     `?text=` / `?slow` / `?anchors` / `?capture=NN` / `?font=name` URL
  *     params, pointer-position fallback for the (hidden) system cursor.
  *   - NEW 'a' mode — "anchor capture": instead of the cursor lens, every
  *     anchor pulls its own particle in once it comes within a capture radius
  *     (soft edge); neighbors follow through the outline springs and the chain
  *     zips the letter back together, hands-free. See tools/capture-demo.js.
- * URL PARAMS:  ?text=some%20text   ?slow   ?anchors   ?capture=NN   ?font=name
+ * URL PARAMS:  ?text=some%20text   ?slow   ?anchors   ?capture=NN   ?font=name   ?beads=0
  * ========================================================================== */
 'use strict';
 
@@ -75,12 +76,12 @@
 const CONFIG = {
   W: 900,
   H: 400, // .pde: size(1600, 720, P2D)
-  input: 'alvarocassinelli', //  rrLIFE', // .pde: input
+  input: 'entangled', //  rrLIFE', // .pde: input
   textSize: 170, // .pde: RG.textFont(fnt, 170)
   offsetX: 80,
   offsetY: 200, // .pde: offset = new Vec2D(80, 390)
-  segLen: 1, // .pde: lengthSegmentPoligonizer
-  drag: 0.01, // .pde: physics.setDrag(0.4)
+  segLen: 3, // .pde: lengthSegmentPoligonizer
+  drag: 0.1, // .pde: physics.setDrag(0.4)
   substeps: 5, // .pde: physicsSubsteps
   repulsionRadius: 30, // .pde: AttractionBehavior2D(p, 30, -10, ...)
   repulsionStrength: 0.4, // .pde: repulsionStrength
@@ -93,12 +94,16 @@ const CONFIG = {
   anchorCaptureRadius: 150, // prx — ?capture=NN in the URL to override
   anchorCaptureSoftness: 5, //[] px — width of the smooth border
   anchorCaptureMidpointFrac: 0.4, // where the sigmoid crosses 0.5 (fraction of radius)
-  lensRadius: 100, // .pde: lensRadius
-  lensSoftness: 5, // .pde: lensSoftness
-  lensMidpointFrac: 0.1, // .pde: lensMidpointFrac
+  lensRadius: 170, // .pde: lensRadius
+  lensSoftness: 40, // .pde: lensSoftness
+  lensMidpointFrac: 0.6, // .pde: lensMidpointFrac
   modPeriodMs: 10000, // .pde: modPeriodMs
   modMinFactor: 0.001, // .pde: modMinFactor
   modMaxFactor: 35.0, // .pde: modMaxFactor
+  /* web addition — the particle "beads": every particle is drawn as a dot;
+   * the ones being pulled (lens / anchor capture) grow and whiten. key 'b'. */
+  beadSize: 3.2, // dot size at rest (px)
+  beadPullGrow: 3.5, // extra size added at full pull activation
   /* bundled fonts — key 't' cycles live; ?font=name picks one at start */
   fonts: [
     { name: 'Shrikhand', url: 'fonts/Shrikhand-Regular.ttf' },
@@ -107,7 +112,7 @@ const CONFIG = {
     { name: 'Chewy', url: 'fonts/Chewy-Regular.ttf' },
     { name: 'Archivo Black', url: 'fonts/ArchivoBlack-Regular.ttf' },
   ],
-  fontIndex: 0,
+  fontIndex: 1,
   fastSolver: true, // install the instance-level fast overrides
 };
 
@@ -157,18 +162,20 @@ CONFIG.slow = !!CONFIG.slow;
 
 const flags = {
   attractToOrigin: true, // .pde: attractToOrigin
-  attractMode: 'anchor', // 'cursor' | 'anchor' (key 'a'; ?anchors in the URL)
+  attractMode: 'cursor', // 'cursor' | 'anchor' (key 'a'; ?anchors in the URL)
   modulateSprings: true, // .pde: modulateSprings
   showCursor: false, // .pde: showCursor (setup() called noCursor())
   lensEnabled: true, // .pde: lensEnabled
-  showLensRing: true, // .pde: showLensRing
+  showLensRing: false, // .pde: showLensRing
   renderOutlineSprings: false, // .pde default was true but never rendered; here it draws, so start off
   renderOriginSprings: false, // .pde: renderOriginSprings
-  trailFade: 30, // .pde: int trailFade
+  trailFade: 255, // .pde: int trailFade
 
-  visualLerp: 0.35, // .pde: float visualLerp
+  visualLerp: 0.05, // .pde: float visualLerp
+  showBeads: true, // web addition: draw the particle "beads" (key 'b')
 };
 if (_params && _params.has('anchors')) flags.attractMode = 'anchor';
+if (_params && _params.has('beads')) flags.showBeads = _params.get('beads') !== '0';
 
 /* ================== 3. PURE HELPERS (node-testable) ====================== */
 
@@ -675,6 +682,10 @@ function draw() {
   // 3. crisp core
   drawAllPaths(null, false);
 
+  // 3b. particle "beads" (web addition, key 'b') — a dot on every particle;
+  //     the ones being pulled by the lens / capture grow and whiten
+  if (flags.showBeads) drawBeads();
+
   // 4. debug overlays
   if (flags.renderOriginSprings) drawOriginSprings(null);
   if (flags.renderOutlineSprings) drawOutlineSprings(null);
@@ -716,6 +727,8 @@ function keyPressed() {
     flags.trailFade = Math.min(255, flags.trailFade + 5); // .pde: trailFade = min(255, trailFade + 5)
   } else if (key === ',') {
     flags.visualLerp = Math.max(0.05, flags.visualLerp - 0.05);
+  } else if (key === 'b' || key === 'B') {
+    flags.showBeads = !flags.showBeads; // web addition
   } else if (key === '.') {
     flags.visualLerp = Math.min(0.9, flags.visualLerp + 0.05);
   } else if (key === 't' || key === 'T') {
@@ -850,6 +863,54 @@ function drawAllPaths(g, glow) {
       one(pts, hue, 90, 100, 28, 4.5); // narrow, brighter
     } else {
       one(pts, hue, 25, 100, 100, 1.4); // crisp pale core
+    }
+  }
+}
+
+/* web addition: the particle "beads" — every particle drawn as a dot on the
+ * smoothed chain, so the letter reads as a string of beads. Beads currently
+ * being pulled (activation > 0) grow and whiten; activation is evaluated at
+ * the particle position with the SAME weight function the physics uses
+ * (enzymeWeight in cursor mode, anchorCaptureWeight in anchor mode), so what
+ * lights up is exactly what is being pulled. Watch a pulled bead drag its
+ * neighbours along through the outline springs. */
+function drawBeads() {
+  if (!visual) return;
+  const anchorMode = flags.attractMode === 'anchor';
+  const base = CONFIG.beadSize;
+  for (let ii = 0; ii < visual.length; ii++) {
+    const pts = visual[ii];
+    if (!pts || pts.length < 2) continue;
+    const hue = (ii * 37) % 100; // same hue as the chain
+    const anchors = originalPathParticles ? originalPathParticles[ii] : null;
+
+    // pass A — the whole string of beads: DARK dots on the glowing wire,
+    // so they read against both the pale core and the saturated glow
+    strokeWeight(base);
+    stroke(hue, 100, 30, 90);
+    for (let i = 0; i < pts.length; i++) point(pts[i].x, pts[i].y);
+
+    // pass B — beads being pulled: grow + whiten (saturation -> 0)
+    for (let i = 0; i < pts.length; i++) {
+      let w = 0;
+      if (flags.lensEnabled) {
+        w =
+          anchorMode && anchors
+            ? anchorCaptureWeight(
+                pts[i].x,
+                pts[i].y,
+                anchors[i].x,
+                anchors[i].y,
+                CONFIG.anchorCaptureRadius,
+                CONFIG.anchorCaptureSoftness,
+                CONFIG.anchorCaptureMidpointFrac,
+              )
+            : enzymeWeight(pts[i].x, pts[i].y);
+      }
+      if (w <= 0.04) continue;
+      strokeWeight(base + CONFIG.beadPullGrow * w);
+      stroke(hue, 100 * (1 - w), 30 + 70 * w, 100); // dark -> blazing white as w -> 1
+      point(pts[i].x, pts[i].y);
     }
   }
 }
@@ -1016,6 +1077,7 @@ function hudText() {
     '2      origin springs        ' + yn(flags.renderOriginSprings),
     '[ ]    trail fade            ' + flags.trailFade,
     ', .    visual lerp           ' + flags.visualLerp.toFixed(2),
+    'b      beads                 ' + yn(flags.showBeads),
     't      font                  ' +
       (CONFIG.fonts && CONFIG.fonts[CONFIG.fontIndex] ? CONFIG.fonts[CONFIG.fontIndex].name : 'n/a'),
     'f      fullscreen',
