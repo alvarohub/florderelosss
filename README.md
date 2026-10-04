@@ -1,11 +1,12 @@
 # myBlobChain — web port
 
 Web version of `myBlobChain_V2_glow2.pde` (Processing): the letter outlines of
-"feliz cumplegonz" become closed chains of Verlet particles that inflate into
-glowing blobs under local repulsion, and are re-formed locally under the cursor
-by an "enzyme lens". Rendered as an additive glow trail plus a crisp core.
-In **anchor-capture mode** (`a`), the letters rebuild themselves — every anchor
-pulls its own particle in once it drifts close enough (see below).
+the input text (default "alvarocassinelli") become closed chains of Verlet
+particles that inflate into glowing blobs under local repulsion, and are
+re-formed locally under the cursor by an "enzyme lens". Rendered as an additive
+glow trail plus a crisp core. In **anchor-capture mode** (`a`), the letters
+rebuild themselves — every anchor pulls its own particle in once it drifts
+close enough (see below).
 
 ## Run locally
 
@@ -34,11 +35,13 @@ Push this folder to a repo (keep `index.html`, `js/`, `vendor/`, `fonts/`,
 | `2`       | origin-springs debug overlay                                   |
 | `[` `]`   | trail fade −/+                                                 |
 | `,` `.`   | visual smoothing −/+                                           |
+| `t`       | cycle bundled fonts (Shrikhand → Pacifico → Rubik Bubbles → Chewy → Archivo Black) |
 | `f`       | fullscreen                                                     |
 | `h` / `?` | help panel                                                     |
 
 URL params: `?text=hello%20world` (replaces the text) · `?anchors` (start in
-anchor-capture mode) · `?capture=NN` (capture radius in px) · `?slow` (runs the
+anchor-capture mode) · `?capture=NN` (capture radius in px) · `?font=name`
+(pick a bundled font at start, prefix match — `?font=pac`) · `?slow` (runs the
 raw toxiclibs.js solver — for comparison).
 
 ## Anchor-capture mode (key `a`)
@@ -88,14 +91,16 @@ Measured with `tools/capture-demo.js` (node; same event cadence as the page):
   UNIFORMLENGTH polygonizer, using the opentype.js font object bundled inside
   p5 (`p5.Font.font`). Each glyph contour (incl. holes) becomes an independent
   closed chain, exactly like the original.
-  Note (Oct 2026) — with the current experimental tuning (`segLen: 3`,
-  `substeps: 8`, `repulsionRadius: 50`) frame cost rises sharply: profile at
-  ~1359 particles gives blob state ≈ 103 ms/frame and rebuilt state ≈
-  297 ms/frame (node), of which the repulsion behaviours are ~280 ms (the
-  springs are ~3 ms thanks to the fast solver). Browser-measured: 24 fps
-  blobby / 11 fps rebuilt. If you want it lighter, `substeps: 2–3` with `drag`
-  ≈ 0.4 keeps a similar feel at ~4× less; a further ~2–3× on the repulsion loop
-  is possible with an allocation-free inline pass (not enabled by default).
+  Note (Oct 2026) — the current experimental tuning is much heavier:
+  `segLen: 1` polygonizes "alvarocassinelli" into ~3.8k particles (≈7.6k
+  springs, ≈3.8k repulsion behaviors). The fast solver still runs, but node
+  measures ≈ 0.9 s/frame and the browser settles at a few fps (≈4 idle, 3821
+  particles). The repulsion behaviors dominate the cost; the springs are cheap
+  thanks to the fast solver. Knobs, if you want it lighter: `substeps: 2–3`
+  with `drag ≈ 0.4` keeps a similar feel at ~4× less; a larger `segLen` (2–3)
+  cuts the particle count roughly proportionally; a further ~2–3× on the
+  repulsion loop is possible with an allocation-free inline pass (not enabled
+  by default).
 
 ## Performance — measured, and the two overrides
 
@@ -119,13 +124,24 @@ Equivalence is validated numerically (re-run anytime: `node tools/validate.js`):
 | perf, node                                   | 82.9 → **14.4 ms/frame**                 |
 | perf, browser (same scene)                   | **15 fps → 60 fps**                      |
 
-## Font
+## Fonts
 
-ReplicaBold (the original) is a commercial typeface, so Archivo Black
-(SIL OFL, see `fonts/OFL.txt`) is bundled instead — a similarly heavy
-grotesque. To use another font: drop a `.ttf` into `fonts/` and change
-`CONFIG.fontUrl` in `js/blobchain.js`. The layout auto-fits the type size if
-the text is wider than the stage.
+Five open-licence fonts are bundled and loaded at startup — **Shrikhand**
+(default), Pacifico, Rubik Bubbles, Chewy, Archivo Black — all verified
+byte-identical to their builds in the
+[google/fonts](https://github.com/google/fonts) repository:
+
+- press **`t`** to cycle them live (the physics rebuilds from the new outlines,
+  trail cleared — each font starts clean);
+- `?font=name` picks one at start (prefix match: `?font=pac` → Pacifico);
+- license files sit next to the fonts in `fonts/` (Shrikhand, Pacifico,
+  Rubik Bubbles, Archivo Black: SIL OFL 1.1; Chewy: Apache License 2.0).
+
+ReplicaBold (the original typeface) is commercial — it stays in `data/`
+locally for archival reference and is **not** part of the repo. To use any
+other font: drop a `.ttf` into `fonts/` and add it to the `CONFIG.fonts`
+array in `js/blobchain.js`. The layout auto-fits the type size if the text is
+wider than the stage.
 
 ## Notes / deviations from the .pde
 
@@ -134,8 +150,9 @@ the text is wider than the stage.
 - Key `1` (`renderOutlineSprings`) was toggled but never rendered in the
   original — here it actually draws the debug overlay (default off, so the
   default look matches the original).
-- Web additions: `f` fullscreen, `h` help, `?text=`, `?slow`, letterboxed
-  responsive scaling (the stage stays 1600×720 logical; DPR-independent).
+- Web additions: `f` fullscreen, `h` help, `t` font cycling, `?text=`, `?slow`,
+  `?font=`, letterboxed responsive scaling (the stage stays 1600×720 logical;
+  DPR-independent).
 - `vendor/opentype.min.js` is **not** loaded by the page (p5 bundles opentype);
   it is used by `tools/validate.js` and kept for reference.
 
@@ -147,10 +164,11 @@ the text is wider than the stage.
     vendor/toxiclibs.min.js       toxiclibs.js 0.3.3
     vendor/LICENSE-toxiclibs.txt  LGPL 2.1
     vendor/opentype.min.js        only for tools/validate.js
-    fonts/ArchivoBlack-Regular.ttf + OFL.txt
+    fonts/*.ttf                   bundled fonts (Shrikhand, Pacifico, Rubik
+                                  Bubbles, Chewy, Archivo Black) + licences
     tools/validate.js             physics equivalence + perf validation (node)
-    myBlobChain_V2_glow2.pde      original Processing sketch (not used by the web version)
     tools/capture-demo.js         anchor-capture dynamics demo / radius tuner (node)
+    myBlobChain_V2_glow2.pde      original Processing sketch (not used by the web version)
     data/JCfg-48.vlw              original Processing font cache (not used)
     .nojekyll                     GitHub Pages hygiene
 
@@ -158,4 +176,6 @@ the text is wider than the stage.
 
 - Original sketch: `myBlobChain_V2_glow2.pde` (Processing)
 - p5.js — LGPL-2.1 · toxiclibs.js — LGPL-2.1 (port of K. Schmidt's toxiclibs) ·
-  opentype.js — MIT · Archivo Black — SIL OFL 1.1
+  opentype.js — MIT
+- Fonts — Shrikhand, Pacifico, Rubik Bubbles, Archivo Black: SIL OFL 1.1 ·
+  Chewy: Apache License 2.0 (all from the google/fonts repository)

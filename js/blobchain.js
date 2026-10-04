@@ -58,15 +58,15 @@
  *   - key '1' (`renderOutlineSprings`) was toggled but never rendered in the
  *     .pde — here it actually draws the outline-spring debug overlay (default
  *     off, so the look matches the original).
- *   - additions: 'h' help panel, 'f' fullscreen, `?text=` / `?slow` /
- *     `?anchors` / `?capture=NN` URL params, pointer-position fallback for the
- *     (hidden) system cursor.
+ *   - additions: 'h' help panel, 'f' fullscreen, 't' cycles the bundled fonts
+ *     (Shrikhand -> Pacifico -> Rubik Bubbles -> Chewy -> Archivo Black),
+ *     `?text=` / `?slow` / `?anchors` / `?capture=NN` / `?font=name` URL
+ *     params, pointer-position fallback for the (hidden) system cursor.
  *   - NEW 'a' mode — "anchor capture": instead of the cursor lens, every
  *     anchor pulls its own particle in once it comes within a capture radius
  *     (soft edge); neighbors follow through the outline springs and the chain
  *     zips the letter back together, hands-free. See tools/capture-demo.js.
- *
- * URL PARAMS:  ?text=some%20text   ?slow   ?anchors   ?capture=NN
+ * URL PARAMS:  ?text=some%20text   ?slow   ?anchors   ?capture=NN   ?font=name
  * ========================================================================== */
 'use strict';
 
@@ -99,7 +99,15 @@ const CONFIG = {
   modPeriodMs: 10000, // .pde: modPeriodMs
   modMinFactor: 0.001, // .pde: modMinFactor
   modMaxFactor: 35.0, // .pde: modMaxFactor
-  fontUrl: 'fonts/ArchivoBlack-Regular.ttf', // ReplicaBold is commercial; see README
+  /* bundled fonts — key 't' cycles live; ?font=name picks one at start */
+  fonts: [
+    { name: 'Shrikhand', url: 'fonts/Shrikhand-Regular.ttf' },
+    { name: 'Pacifico', url: 'fonts/Pacifico-Regular.ttf' },
+    { name: 'Rubik Bubbles', url: 'fonts/RubikBubbles-Regular.ttf' },
+    { name: 'Chewy', url: 'fonts/Chewy-Regular.ttf' },
+    { name: 'Archivo Black', url: 'fonts/ArchivoBlack-Regular.ttf' },
+  ],
+  fontIndex: 0,
   fastSolver: true, // install the instance-level fast overrides
 };
 
@@ -137,6 +145,11 @@ if (_params) {
   if (_params.has('slow')) CONFIG.slow = true;
   const _cap = parseFloat(_params.get('capture'));
   if (_cap > 0) CONFIG.anchorCaptureRadius = _cap;
+  const _fn = (_params.get('font') || '').toLowerCase();
+  if (_fn && CONFIG.fonts) {
+    const _fi = CONFIG.fonts.findIndex((f) => f.name.toLowerCase().startsWith(_fn));
+    if (_fi >= 0) CONFIG.fontIndex = _fi;
+  }
 }
 CONFIG.slow = !!CONFIG.slow;
 
@@ -510,7 +523,8 @@ function buildLetterPhysics(physics, contours, C) {
 
 /* ======================= 4. p5 SKETCH (global mode) ====================== */
 
-let blobFont = null;
+let blobFont = null; // active p5.Font (blobFonts[CONFIG.fontIndex])
+let blobFonts = []; // all bundled fonts, loaded in preload()
 let physics = null;
 let trail = null; // .pde: PGraphics trail
 let pathParticles = null; // .pde: VerletParticle2D[][] pathParticles
@@ -533,7 +547,8 @@ let _fpsFrames = 0,
 /* --- p5 lifecycle -------------------------------------------------------- */
 
 function preload() {
-  blobFont = loadFont(CONFIG.fontUrl);
+  const list = CONFIG.fonts || [{ name: 'Archivo Black', url: CONFIG.fontUrl }];
+  blobFonts = list.map((f) => loadFont(f.url));
 }
 
 function setup() {
@@ -548,6 +563,7 @@ function setup() {
   hintEl = document.getElementById('hint');
   fatalEl = document.getElementById('fatal');
   applyCursor(); // .pde: noCursor()
+  blobFont = blobFonts[CONFIG.fontIndex || 0] || blobFonts.find((f) => f && f.font);
 
   if (typeof toxi === 'undefined') {
     showFatal('toxiclibs.js did not load.\nCheck vendor/toxiclibs.min.js.');
@@ -555,8 +571,8 @@ function setup() {
   }
   if (!blobFont || !blobFont.font) {
     showFatal(
-      'Could not load the font:\n' +
-        CONFIG.fontUrl +
+      'Could not load the fonts —\n' +
+        (CONFIG.fonts || []).map((f) => f.url).join('\n') +
         '\n(keep the fonts/ folder next to index.html, and run from a local server)',
     );
     return;
@@ -702,6 +718,8 @@ function keyPressed() {
     flags.visualLerp = Math.max(0.05, flags.visualLerp - 0.05);
   } else if (key === '.') {
     flags.visualLerp = Math.min(0.9, flags.visualLerp + 0.05);
+  } else if (key === 't' || key === 'T') {
+    cycleFont(); // web addition
   } else if (key === 'f' || key === 'F') {
     fullscreen(!fullscreen()); // web addition
   } else if (key === 'h' || key === 'H' || key === '?') {
@@ -915,6 +933,23 @@ function clearTrail() {
   trail.rect(0, 0, CONFIG.W, CONFIG.H);
 }
 
+/* web addition: cycle through the bundled fonts (all preloaded) and rebuild
+ * the physics from the new letter outlines — the trail is cleared so each
+ * font starts clean */
+function cycleFont() {
+  const n = blobFonts.length;
+  if (!CONFIG.fonts || n < 2) return;
+  let i = CONFIG.fontIndex;
+  for (let k = 0; k < n; k++) {
+    i = (i + 1) % n;
+    if (blobFonts[i] && blobFonts[i].font) break;
+  }
+  CONFIG.fontIndex = i;
+  blobFont = blobFonts[i];
+  initPhysics();
+  clearTrail();
+}
+
 /* letterbox-fit the 1600x720 canvas into the window (aspect preserved) */
 function fitCanvas() {
   if (!cnvEl) return;
@@ -981,6 +1016,8 @@ function hudText() {
     '2      origin springs        ' + yn(flags.renderOriginSprings),
     '[ ]    trail fade            ' + flags.trailFade,
     ', .    visual lerp           ' + flags.visualLerp.toFixed(2),
+    't      font                  ' +
+      (CONFIG.fonts && CONFIG.fonts[CONFIG.fontIndex] ? CONFIG.fonts[CONFIG.fontIndex].name : 'n/a'),
     'f      fullscreen',
     'h      hide this panel',
     '',

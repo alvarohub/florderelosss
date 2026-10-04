@@ -94,7 +94,9 @@ if (PRESET === 'original') {
 }
 const RAD = RADIUS_ARG || C.anchorCaptureRadius;
 
-const font = opentype.loadSync(path.join(ROOT, 'fonts', 'ArchivoBlack-Regular.ttf'));
+const fontEntry =
+  (C.fonts && C.fonts[C.fontIndex || 0]) || { url: 'fonts/ArchivoBlack-Regular.ttf' };
+const font = opentype.loadSync(path.join(ROOT, fontEntry.url));
 const contours = bc.extractContours(font, C.input, C.textSize, C.segLen, C.offsetX, C.offsetY, C.W - C.offsetX - 40);
 
 /* --- scene ----------------------------------------------------------------- */
