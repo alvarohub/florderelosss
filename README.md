@@ -25,29 +25,36 @@ Push this folder to a repo (keep `index.html`, `js/`, `vendor/`, `fonts/`,
 
 ## Controls
 
-| key       | action                                                                             |
-| --------- | ---------------------------------------------------------------------------------- |
-| `0`       | reset positions + clear trail                                                      |
-| `space`   | toggle attract-to-origin                                                           |
-| `a`       | attraction source: cursor lens ↔ anchor capture (see below)                        |
-| `c`       | show/hide system cursor (hidden by default, like the original)                     |
-| `m`       | temporal modulation of springs & repulsion                                         |
-| `l`       | enzyme lens on/off                                                                 |
-| `r`       | lens ring on/off                                                                   |
-| `1`       | outline-springs debug overlay                                                      |
-| `2`       | origin-springs debug overlay                                                       |
-| `[` `]`   | trail fade −/+                                                                     |
-| `,` `.`   | visual smoothing −/+                                                               |
-| `b`       | particle beads on/off — a dot on every particle; pulled ones light up              |
-| `t`       | cycle bundled fonts (Shrikhand → Pacifico → Rubik Bubbles → Chewy → Archivo Black) |
-| `f`       | fullscreen                                                                         |
-| `h` / `?` | help panel                                                                         |
+| key       | action                                                                                        |
+| --------- | --------------------------------------------------------------------------------------------- |
+| `0`       | reset positions + clear trail                                                                 |
+| `space`   | toggle attract-to-origin                                                                      |
+| `a`       | attraction source: cursor lens ↔ anchor capture (see below)                                   |
+| `c`       | show/hide system cursor (hidden by default, like the original)                                |
+| `m`       | temporal modulation of springs & repulsion                                                    |
+| `l`       | enzyme lens on/off                                                                            |
+| `r`       | lens ring on/off                                                                              |
+| `1`       | outline-springs debug overlay                                                                 |
+| `2`       | origin-springs debug overlay                                                                  |
+| `[` `]`   | trail fade −/+ (0–100; lower = longer glow trails, each press ±10)                            |
+| `,` `.`   | visual smoothing −/+ (0 = none, 0.9 = max)                                                    |
+| `b`       | particle beads on/off — a dot on every particle; pulled ones light up                         |
+| `k`       | clock mode — the time, breathing: slow formation → short readable hold → slow dissolution     |
+| `s`       | scan mode — a slow virtual cursor sweeps left → right; the lens rides it                      |
+| `g`       | grayscale — minimal white rendering (no hues)                                                 |
+| `p`       | cycle parameter modes — see `js/modes.js` (keep / chaos / storm / still)                      |
+| `t`       | cycle fonts (Shrikhand → Pacifico → Rubik Bubbles → Chewy → Archivo Black → **LED Segments**) |
+| `f`       | fullscreen                                                                                    |
+| `h` / `?` | help panel                                                                                    |
 
 URL params: `?text=hello%20world` (replaces the text) · `?anchors` (start in
 anchor-capture mode) · `?capture=NN` (capture radius in px) · `?font=name`
 (pick a bundled font at start, prefix match — `?font=pac`) · `?beads=0` (hide
-the particle beads — on by default) · `?slow` (runs the raw toxiclibs.js
-solver — for comparison).
+the particle beads — on by default) · `?clock` (start in clock mode) ·
+`?scan` (start with the scanning beam) · `?sweep=NN` (scan sweep in seconds —
+8 by default) · `?gray` (start grayscale) · `?period=NN` (clock breathing
+period in seconds) · `?mode=name` (start in one of the modes — see below) ·
+`?slow` (runs the raw toxiclibs.js solver — for comparison).
 
 ## Anchor-capture mode (key `a`)
 
@@ -74,6 +81,42 @@ Measured with `tools/capture-demo.js` (node; same event cadence as the page):
   node tools/capture-demo.js [radius] [seconds] [warmup] [preset]
 
   # preset: 'current' (default) | 'original'
+
+## Clock mode (key `k`)
+
+The text becomes the current time (`HH:MM`, centred on the stage), and the
+origin springs **breathe** with a shaped envelope (`CONFIG.clockPeriodMs`,
+10 s default for checking; `?period=NN` in seconds): the readable time is a
+SHORT hold (clockHoldFrac, 12% of the cycle) centred on the cycle boundary; a
+slow **formation** (smoothstep, 18%) gathers the loops into the digits just
+before the boundary; a slow **dissolution** (24%) lets them bloom back into
+entangled superstrings; and the remainder — the longest phase — is an
+**abstract dwell** where the loops drift on the jitter and modulation. The
+piece is about the _formation_ of the time as much as reading it. At 60000
+the phase locks to the wall clock: readable exactly on each minute. When the
+text flips, it morphs to the new time without teleporting (the rebuild seeds
+the free particles from the tangled positions). `?clock` starts the mode; `k`
+toggles it off (back to `CONFIG.input`); `0` snaps the current time at any
+moment.
+
+**Scan alternative** (key `s`, `?scan`): instead of the global breathing, a
+virtual cursor sweeps left → right across the stage every
+`CONFIG.scanPeriodMs` (default 8 s; `?sweep=NN` in seconds) and the enzyme
+lens rides it — the time re-forms as the beam passes and re-tangles behind
+it. With clock mode on, the scan replaces the breathing. The rings are off
+by default everywhere; `r` toggles them (the scan beam included).
+
+## Modes (key `p`, `?mode=name`)
+
+`js/modes.js` is the collection of **modes we found that are cool** — named
+parameter sets, each overriding CONFIG keys on top of the baseline (your
+hand-tuning as loaded). `p` cycles them live (physics rebuilds, trail
+clears); `?mode=chaos` starts in one; your font choice survives the switch.
+The seed set: **keep** (`{}` — the reference hand-tuning), **chaos** and
+**storm** (more agitation + `clockStir`, which boosts the repulsion during
+the abstract dwell so the loops keep folding toward crossing, woven
+strings), **still** (calm, heavy drag). Add your own entries to that file —
+that is the point of it.
 
 ## Stack & fidelity
 
@@ -145,6 +188,12 @@ byte-identical to their builds in the
 - license files sit next to the fonts in `fonts/` (Shrikhand, Pacifico,
   Rubik Bubbles, Archivo Black: SIL OFL 1.1; Chewy: Apache License 2.0).
 
+A sixth, built-in "font" rides the same cycle: **LED Segments** — the
+seven-segment display of a digital clock, with every lit segment generated
+as its own chain. It renders digits `0-9` and `:` (letters ride as blank
+cells; with no digits at all it shows a live clock demo — perfect with clock
+mode). `?font=led` jumps straight to it.
+
 ReplicaBold (the original typeface) is commercial — it stays in `data/`
 locally for archival reference and is **not** part of the repo. To use any
 other font: drop a `.ttf` into `fonts/` and add it to the `CONFIG.fonts`
@@ -160,9 +209,13 @@ wider than the stage.
   default look matches the original).
 - Web additions: `f` fullscreen, `h` help, `t` font cycling, `b` particle
   beads (dark dots on every particle; the ones being pulled heat up to white,
-  so the pull is visible as it travels along the chain), `?text=`, `?slow`,
-  `?font=`, `?beads=0`, letterboxed responsive scaling (the stage stays
-  1600×720 logical; DPR-independent).
+  so the pull is visible as it travels along the chain), `g` grayscale
+  (minimal white rendering), `k` clock mode (slow formation → short readable
+  hold → slow dissolution → long abstract dwell), `s` scan mode (slow
+  sweeping virtual cursor), `p` parameter modes (`js/modes.js`), `?text=`,
+  `?slow`, `?font=`, `?beads=0`, `?clock`, `?scan`, `?sweep=NN`, `?gray`,
+  `?period=NN`, `?mode=name`, letterboxed responsive scaling (the stage
+  stays 1600×720 logical; DPR-independent).
 - `vendor/opentype.min.js` is **not** loaded by the page (p5 bundles opentype);
   it is used by `tools/validate.js` and kept for reference.
 
@@ -170,6 +223,7 @@ wider than the stage.
 
     index.html                    page: canvas + hint / help / error overlays
     js/blobchain.js               the sketch (config, contours, fast solver, p5 code)
+    js/modes.js                   named parameter modes (key 'p' cycles them)
     vendor/p5.min.js              p5.js 1.11.3
     vendor/toxiclibs.min.js       toxiclibs.js 0.3.3
     vendor/LICENSE-toxiclibs.txt  LGPL 2.1

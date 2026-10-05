@@ -59,15 +59,21 @@
  *     .pde — here it actually draws the outline-spring debug overlay (default
  *     off, so the look matches the original).
  *   - additions: 'h' help panel, 'f' fullscreen, 'b' particle "beads"
- *     (dots on every particle; pulled ones light up), 't' cycles the bundled
- *     fonts (Shrikhand -> Pacifico -> Rubik Bubbles -> Chewy -> Archivo Black),
+ *     (dots on every particle; pulled ones light up), 'g' grayscale (minimal
+ *     white rendering), 'k' clock mode (the text becomes the time and
+ *     breathes: slow formation -> short readable hold -> slow dissolution ->
+ *     long abstract dwell; 's' scans a virtual cursor left->right instead;
+ *     'p' cycles the parameter modes in js/modes.js),
+ *     't' cycles the fonts (Shrikhand -> Pacifico -> Rubik Bubbles -> Chewy
+ *     -> Archivo Black -> LED Segments — a seven-segment clock display
+ *     generated as chains; ?font=led),
  *     `?text=` / `?slow` / `?anchors` / `?capture=NN` / `?font=name` URL
  *     params, pointer-position fallback for the (hidden) system cursor.
  *   - NEW 'a' mode — "anchor capture": instead of the cursor lens, every
  *     anchor pulls its own particle in once it comes within a capture radius
  *     (soft edge); neighbors follow through the outline springs and the chain
  *     zips the letter back together, hands-free. See tools/capture-demo.js.
- * URL PARAMS:  ?text=some%20text   ?slow   ?anchors   ?capture=NN   ?font=name   ?beads=0
+ * URL PARAMS:  ?text=some%20text   ?slow   ?anchors   ?capture=NN   ?font=name   ?beads=0   ?clock   ?scan   ?period=NN   ?sweep=NN   ?gray   ?mode=name
  * ========================================================================== */
 'use strict';
 
@@ -80,7 +86,7 @@ const CONFIG = {
   textSize: 170, // .pde: RG.textFont(fnt, 170)
   offsetX: 80,
   offsetY: 200, // .pde: offset = new Vec2D(80, 390)
-  segLen: 3, // .pde: lengthSegmentPoligonizer
+  segLen: 2, // .pde: lengthSegmentPoligonizer
   drag: 0.1, // .pde: physics.setDrag(0.4)
   substeps: 5, // .pde: physicsSubsteps
   repulsionRadius: 30, // .pde: AttractionBehavior2D(p, 30, -10, ...)
@@ -104,6 +110,20 @@ const CONFIG = {
    * the ones being pulled (lens / anchor capture) grow and whiten. key 'b'. */
   beadSize: 3.2, // dot size at rest (px)
   beadPullGrow: 3.5, // extra size added at full pull activation
+  /* web addition — clock-mode dynamics: the origin springs breathe (slowly
+   * attract -> slowly release), phase-locked to Date.now() so that at 60000
+   * the letters are fully formed exactly on each minute; 10000 for checking */
+  clockPeriodMs: 2000,
+  /* envelope shape (fractions of the cycle): the readable hold is SHORT and
+   * centred on the cycle boundary; the abstract dwell (the remainder) is the
+   * longest phase. Formation/dissolution stay slow (smoothstep). */
+  clockAttackFrac: 0.18, // slow formation, ending just before the boundary
+  clockHoldFrac: 0.12, // readable window, centred on the boundary
+  clockReleaseFrac: 0.24, // slow dissolution after the boundary
+  /* extra repulsion during the abstract dwell (0 = off): scales with
+   * (1 - envelope) so the loops keep folding toward crossing, woven strings */
+  clockStir: 0,
+  scanPeriodMs: 8000, // scan mode: virtual cursor sweep, left->right in this period (?sweep=NN seconds)
   /* bundled fonts — key 't' cycles live; ?font=name picks one at start */
   fonts: [
     { name: 'Shrikhand', url: 'fonts/Shrikhand-Regular.ttf' },
@@ -111,6 +131,7 @@ const CONFIG = {
     { name: 'Rubik Bubbles', url: 'fonts/RubikBubbles-Regular.ttf' },
     { name: 'Chewy', url: 'fonts/Chewy-Regular.ttf' },
     { name: 'Archivo Black', url: 'fonts/ArchivoBlack-Regular.ttf' },
+    { name: 'LED Segments', type: 'led' }, // 7-segment clock display, built from chains (no ttf)
   ],
   fontIndex: 1,
   fastSolver: true, // install the instance-level fast overrides
@@ -143,6 +164,9 @@ const CONFIG_1 = {
 };
 
 /* --- URL parameters ------------------------------------------------------ */
+// Check if 'location' and 'location.search' exist (i.e., if there are URL parameters)
+// If so, create a URLSearchParams object from the query string and extract specific parameters ('text', 'slow', 'capture', 'font') and update CONFIG accordingly.
+// If not, the default values in CONFIG are used.
 const _params = typeof location !== 'undefined' && location.search ? new URLSearchParams(location.search) : null;
 if (_params) {
   const _t = _params.get('text');
@@ -159,7 +183,7 @@ if (_params) {
 CONFIG.slow = !!CONFIG.slow;
 
 /* ======================== 2. FLAGS (from the .pde) ======================= */
-
+// Compared with CONFIG, these are the runtime flags that control various visual and interactive aspects of the simulation
 const flags = {
   attractToOrigin: true, // .pde: attractToOrigin
   attractMode: 'cursor', // 'cursor' | 'anchor' (key 'a'; ?anchors in the URL)
@@ -169,13 +193,26 @@ const flags = {
   showLensRing: false, // .pde: showLensRing
   renderOutlineSprings: false, // .pde default was true but never rendered; here it draws, so start off
   renderOriginSprings: false, // .pde: renderOriginSprings
-  trailFade: 255, // .pde: int trailFade
+  /* trail fade = the per-frame black-rect alpha (0..100): LOWER = longer glow
+   * trails. The .pde's 255 clamp was dead above 100 (colorMode HSB/100 caps
+   * alpha) — fixed here so every key press actually changes the blending. */
+  trailFade: 100, // 100 = no trails (current look); try 40..60 for the long glow
 
   visualLerp: 0.05, // .pde: float visualLerp
   showBeads: true, // web addition: draw the particle "beads" (key 'b')
+  clockOn: true, // web addition: clock mode (key 'k'; ?clock) — the time as text
+  scanMode: false, // web addition: virtual scanning cursor, lens mode (key 's'; ?scan)
+  grayMode: false, // web addition: pure grayscale rendering (key 'g'; ?gray)
 };
 if (_params && _params.has('anchors')) flags.attractMode = 'anchor';
 if (_params && _params.has('beads')) flags.showBeads = _params.get('beads') !== '0';
+if (_params && _params.has('clock')) flags.clockOn = true;
+if (_params && _params.has('scan')) flags.scanMode = true;
+if (_params && _params.has('gray')) flags.grayMode = true;
+const _per = _params ? parseFloat(_params.get('period')) : NaN;
+if (_per > 0) CONFIG.clockPeriodMs = _per * 1000; // ?period=NN — breathing period in seconds
+const _sweep = _params ? parseFloat(_params.get('sweep')) : NaN;
+if (_sweep > 0) CONFIG.scanPeriodMs = _sweep * 1000; // ?sweep=NN — scan sweep period in seconds
 
 /* ================== 3. PURE HELPERS (node-testable) ====================== */
 
@@ -340,6 +377,120 @@ function extractContours(font, text, size, segLen, offsetX, offsetY, maxWidth) {
     }
   }
   return contours;
+}
+
+/* --- LED 7-segment "font" (web addition) --------------------------------- */
+/* A digital-clock LED display drawn as chains: every LIT segment is its own
+ * closed contour (the classic bar with 45-degree bevels), and digits are
+ * assembled from the seven standard segments a..g. Renders digits 0-9 and
+ * ':' — other characters ride as blank cells (letters are skipped). Same
+ * contract as extractContours: canvas coordinates, auto-fit to maxWidth,
+ * points spaced ~segLen apart. */
+const LED_SEGMENTS = {
+  0: 'abcdef',
+  1: 'bc',
+  2: 'abged',
+  3: 'abgcd',
+  4: 'fgbc',
+  5: 'afgcd',
+  6: 'afgecd',
+  7: 'abc',
+  8: 'abcdefg',
+  9: 'abcdfg',
+};
+
+/* one segment bar (pointed tips) between two node points; `gap` retracts
+ * both ends so neighbouring segments keep the classic black diagonal gaps */
+function ledBarPath(x0, y0, x1, y1, T, gap) {
+  const bevel = T * 0.8;
+  if (y0 === y1) {
+    const xa = Math.min(x0, x1) + gap,
+      xb = Math.max(x0, x1) - gap;
+    return [
+      { x: xa, y: y0 },
+      { x: xa + bevel, y: y0 - T / 2 },
+      { x: xb - bevel, y: y0 - T / 2 },
+      { x: xb, y: y0 },
+      { x: xb - bevel, y: y0 + T / 2 },
+      { x: xa + bevel, y: y0 + T / 2 },
+    ];
+  }
+  const ya = Math.min(y0, y1) + gap,
+    yb = Math.max(y0, y1) - gap;
+  return [
+    { x: x0, y: ya },
+    { x: x0 + T / 2, y: ya + bevel },
+    { x: x0 + T / 2, y: yb - bevel },
+    { x: x0, y: yb },
+    { x: x0 - T / 2, y: yb - bevel },
+    { x: x0 - T / 2, y: ya + bevel },
+  ];
+}
+
+function ledDigitPaths(digit, x, y, w, h, T, gap, out) {
+  const segs = LED_SEGMENTS[digit];
+  if (!segs) return;
+  const nl = T / 2,
+    nr = w - T / 2,
+    nt = T / 2,
+    nb = h - T / 2,
+    nv = h / 2;
+  const bar = (x0, y0, x1, y1) => out.push(ledBarPath(x + x0, y + y0, x + x1, y + y1, T, gap));
+  if (segs.includes('a')) bar(nl, nt, nr, nt);
+  if (segs.includes('g')) bar(nl, nv, nr, nv);
+  if (segs.includes('d')) bar(nl, nb, nr, nb);
+  if (segs.includes('f')) bar(nl, nt, nl, nv);
+  if (segs.includes('b')) bar(nr, nt, nr, nv);
+  if (segs.includes('e')) bar(nl, nv, nl, nb);
+  if (segs.includes('c')) bar(nr, nv, nr, nb);
+}
+
+/* the colon: two square dots */
+function ledColonPaths(x, y, w, h, T, out) {
+  const s = T * 1.05,
+    cx = x + w / 2;
+  for (const cy of [y + h * 0.34, y + h * 0.66]) {
+    out.push([
+      { x: cx + s / 2, y: cy - s / 2 },
+      { x: cx - s / 2, y: cy - s / 2 },
+      { x: cx - s / 2, y: cy + s / 2 },
+      { x: cx + s / 2, y: cy + s / 2 },
+    ]);
+  }
+}
+
+function extractLedContours(text, size, segLen, offsetX, offsetY, maxWidth) {
+  const h0 = Math.max(10, size); // digit cell height
+  const w0 = h0 * 0.62; // digit cell width
+  const t0 = w0 * 0.115; // segment thickness (thin -> elongated bars like a real display)
+  const gap0 = t0 * 0.5; // retraction at each node (the black gaps)
+  const adv0 = w0 + t0 * 1.6; // digit pitch
+  const col0 = t0 * 2.2 + t0 * 1.6; // colon cell + spacing
+  let total = 0;
+  for (const ch of text) total += ch === ':' ? col0 : adv0;
+  let scale = 1;
+  if (maxWidth > 0 && total > maxWidth) scale = maxWidth / total;
+  const H = h0 * scale,
+    W = w0 * scale,
+    T = t0 * scale,
+    gap = gap0 * scale,
+    adv = adv0 * scale,
+    col = col0 * scale;
+  const top = offsetY - H; // digits sit on the offsetY baseline
+  const polys = [];
+  let x = offsetX;
+  for (const ch of text) {
+    if (ch >= '0' && ch <= '9') {
+      ledDigitPaths(ch, x, top, W, H, T, gap, polys);
+      x += adv;
+    } else if (ch === ':') {
+      ledColonPaths(x, top, col - T * 1.25, H, T, polys);
+      x += col;
+    } else {
+      x += adv; // blank cell (letters, spaces)
+    }
+  }
+  return polys.map((pts) => resampleClosed(pts, Math.max(0.5, segLen)));
 }
 
 /* --- fast solver (instance-level, formula-identical to the library) ------ */
@@ -532,6 +683,15 @@ function buildLetterPhysics(physics, contours, C) {
 
 let blobFont = null; // active p5.Font (blobFonts[CONFIG.fontIndex])
 let blobFonts = []; // all bundled fonts, loaded in preload()
+
+/* the active CONFIG.fonts entry — the LED "font" (type 'led') has no ttf */
+function activeFontEntry() {
+  return (CONFIG.fonts && CONFIG.fonts[CONFIG.fontIndex || 0]) || null;
+}
+function isLedFont() {
+  const e = activeFontEntry();
+  return !!(e && e.type === 'led');
+}
 let physics = null;
 let trail = null; // .pde: PGraphics trail
 let pathParticles = null; // .pde: VerletParticle2D[][] pathParticles
@@ -546,6 +706,9 @@ let cnvEl = null,
   hintEl = null,
   fatalEl = null;
 let ready = false;
+let activeInput = CONFIG.input; // web addition: the text currently built (clock mode swaps it)
+let lastClockKey = null; // web addition: last built "HH:MM" (clock mode)
+let carryPool = null; // web addition: tangled positions carried over a clock rebuild
 const pointer = { x: 0, y: 0 }; // .pde: mouseX / mouseY (logical canvas px)
 const state = { fps: 0, errors: [] };
 let _fpsFrames = 0,
@@ -555,7 +718,7 @@ let _fpsFrames = 0,
 
 function preload() {
   const list = CONFIG.fonts || [{ name: 'Archivo Black', url: CONFIG.fontUrl }];
-  blobFonts = list.map((f) => loadFont(f.url));
+  blobFonts = list.map((f) => (f.url ? loadFont(f.url) : null)); // the LED entry has no ttf
 }
 
 function setup() {
@@ -570,13 +733,14 @@ function setup() {
   hintEl = document.getElementById('hint');
   fatalEl = document.getElementById('fatal');
   applyCursor(); // .pde: noCursor()
+  const _fontEntry = activeFontEntry();
   blobFont = blobFonts[CONFIG.fontIndex || 0] || blobFonts.find((f) => f && f.font);
 
   if (typeof toxi === 'undefined') {
     showFatal('toxiclibs.js did not load.\nCheck vendor/toxiclibs.min.js.');
     return;
   }
-  if (!blobFont || !blobFont.font) {
+  if (!(_fontEntry && _fontEntry.type === 'led') && (!blobFont || !blobFont.font)) {
     showFatal(
       'Could not load the fonts —\n' +
         (CONFIG.fonts || []).map((f) => f.url).join('\n') +
@@ -590,6 +754,14 @@ function setup() {
   trail.colorMode(HSB, 100);
   trail.background(0);
 
+  snapshotBase(); // modes restore to this baseline
+  const _m = _params ? _params.get('mode') : null;
+  if (!_m || !applyMode(_m, false)) applyMode('keep', false); // ?mode=name (no rebuild: initPhysics follows)
+
+  if (flags.clockOn) {
+    activeInput = clockString(); // ?clock: start on the current time
+    lastClockKey = activeInput;
+  }
   initPhysics();
 
   fitCanvas();
@@ -611,15 +783,36 @@ function initPhysics() {
   physics.setWorldBounds(new toxi.geom.Rect(0, 0, CONFIG.W, CONFIG.H)); // .pde: Rect(0,0,width,height)
   physics.setDrag(CONFIG.drag); // .pde: setDrag(0.4)
 
-  const contours = extractContours(
-    blobFont.font,
-    CONFIG.input,
-    CONFIG.textSize,
-    CONFIG.segLen,
-    CONFIG.offsetX,
-    CONFIG.offsetY,
-    CONFIG.W - CONFIG.offsetX - 40,
-  );
+  let contours;
+  if (isLedFont()) {
+    // LED display: digits + ':' only; with no digits at all, show a live
+    // clock instead (nothing else would be drawn)
+    const maxW = CONFIG.W - CONFIG.offsetX - 40;
+    contours = extractLedContours(activeInput, CONFIG.textSize, CONFIG.segLen, CONFIG.offsetX, CONFIG.offsetY, maxW);
+    if (contours.length === 0) {
+      contours = extractLedContours(
+        clockString(),
+        CONFIG.textSize,
+        CONFIG.segLen,
+        CONFIG.offsetX,
+        CONFIG.offsetY,
+        maxW,
+      );
+    }
+  } else {
+    contours = extractContours(
+      blobFont.font,
+      activeInput,
+      CONFIG.textSize,
+      CONFIG.segLen,
+      CONFIG.offsetX,
+      CONFIG.offsetY,
+      CONFIG.W - CONFIG.offsetX - 40,
+    );
+  }
+
+  // clock mode (web addition): centre the time on the stage
+  if (flags.clockOn) centerContours(contours);
 
   const built = buildLetterPhysics(physics, contours, CONFIG);
   pathParticles = built.pathParticles;
@@ -638,6 +831,10 @@ function initPhysics() {
     });
   }
 
+  // clock mode (web addition): start from the carried (tangled) positions —
+  // no teleport; the breathing envelope (or the scan) pulls the letter home
+  if (flags.clockOn) seedFromCarryPool();
+
   applyAttractToOrigin();
   applyEnzymeLens();
 }
@@ -648,6 +845,12 @@ function draw() {
     background(0);
     return;
   }
+
+  // clock mode (web addition): when the wall-clock minute changes, rebuild
+  // the text with the new time and snap it intact — legible for a moment,
+  // then the physics entangles it again over the following minute
+  checkClock();
+  updateScan();
 
   applyAttractToOrigin();
   applyEnzymeLens();
@@ -667,7 +870,9 @@ function draw() {
   // 1. trail buffer
   trail.blendMode(BLEND);
   trail.noStroke();
-  trail.fill(0, 0, 0, flags.trailFade);
+  // the trail buffer runs in HSB/100 — alpha lives in 0..100 as well; floor 2
+  // keeps the trail always fading (no unbounded accumulation)
+  trail.fill(0, 0, 0, Math.max(2, Math.min(100, flags.trailFade)));
   trail.rect(0, 0, CONFIG.W, CONFIG.H);
   trail.blendMode(ADD);
   drawAllPaths(trail, true);
@@ -690,10 +895,12 @@ function draw() {
   if (flags.renderOriginSprings) drawOriginSprings(null);
   if (flags.renderOutlineSprings) drawOutlineSprings(null);
 
-  // 5. lens / capture indicator
+  // 5. lens / capture indicator — off by default; 'r' toggles it (in scan
+  //    mode too: the beam just draws its ring when enabled)
   if (flags.showLensRing && flags.lensEnabled) {
-    if (flags.attractMode === 'anchor') drawCaptureField();
-    else drawLensRing(null);
+    if (!flags.scanMode && flags.attractMode === 'anchor') {
+      if (!flags.clockOn) drawCaptureField();
+    } else drawLensRing(null);
   }
 
   updateFps();
@@ -722,13 +929,21 @@ function keyPressed() {
   } else if (key === '2') {
     flags.renderOriginSprings = !flags.renderOriginSprings;
   } else if (key === '[') {
-    flags.trailFade = Math.max(2, flags.trailFade - 5); // .pde: trailFade = max(2, trailFade - 5)
+    flags.trailFade = Math.max(0, flags.trailFade - 10); // longer glow trails (−10, 0..100)
   } else if (key === ']') {
-    flags.trailFade = Math.min(255, flags.trailFade + 5); // .pde: trailFade = min(255, trailFade + 5)
+    flags.trailFade = Math.min(100, flags.trailFade + 10); // shorter trails (+10; 100 = none)
   } else if (key === ',') {
-    flags.visualLerp = Math.max(0.05, flags.visualLerp - 0.05);
+    flags.visualLerp = Math.max(0, flags.visualLerp - 0.05); // can reach 0 = no smoothing
   } else if (key === 'b' || key === 'B') {
     flags.showBeads = !flags.showBeads; // web addition
+  } else if (key === 'k' || key === 'K') {
+    toggleClock(); // web addition: clock mode (the time, one-minute cycle)
+  } else if (key === 's' || key === 'S') {
+    flags.scanMode = !flags.scanMode; // web addition: scanning virtual cursor
+  } else if (key === 'g' || key === 'G') {
+    flags.grayMode = !flags.grayMode; // web addition: pure grayscale rendering
+  } else if (key === 'p' || key === 'P') {
+    cycleMode(); // web addition: cycle the parameter modes (js/modes.js)
   } else if (key === '.') {
     flags.visualLerp = Math.min(0.9, flags.visualLerp + 0.05);
   } else if (key === 't' || key === 'T') {
@@ -774,10 +989,19 @@ function applyEnzymeLens() {
   }
 
   const anchorMode = flags.attractMode === 'anchor';
+  /* clock breathing (web addition): clockEnvelope() over one clockPeriodMs
+   * cycle — a short readable hold centred on the cycle boundary (at 60000 ms,
+   * the wall-clock minute), slow formation before it, slow dissolution after
+   * it, and a long abstract dwell in between. While clocking (and not
+   * scanning), the envelope replaces the lens/capture activation. */
+  const clockEnv =
+    flags.clockOn && !flags.scanMode ? clockEnvelope((Date.now() % CONFIG.clockPeriodMs) / CONFIG.clockPeriodMs) : null;
   for (let i = 0; i < originSprings.length; i++) {
     const s = originSprings[i];
     let activation = 0;
-    if (flags.lensEnabled) {
+    if (clockEnv !== null) {
+      activation = clockEnv;
+    } else if (flags.lensEnabled) {
       activation = anchorMode
         ? anchorCaptureWeight(
             s.a.x,
@@ -796,8 +1020,12 @@ function applyEnzymeLens() {
   for (const s of outlineSprings) {
     s.setStrength(CONFIG.outlineSpringStrength * outlineFactor);
   }
+  /* clock stir (web addition): while clocking, boost the repulsion during the
+   * abstract dwell (envelope low) by CONFIG.clockStir — the extra agitation
+   * that keeps the loops folding toward real entanglement (crossing strings) */
+  const repulsionStir = clockEnv !== null ? 1 + CONFIG.clockStir * (1 - clockEnv) : 1;
   for (let k = 0; k < repulsionBehaviors.length; k++) {
-    repulsionBehaviors[k].setStrength(-CONFIG.repulsionStrength * repulsionFactor);
+    repulsionBehaviors[k].setStrength(-CONFIG.repulsionStrength * repulsionFactor * repulsionStir);
   }
 }
 
@@ -857,12 +1085,13 @@ function drawAllPaths(g, glow) {
   for (let ii = 0; ii < visual.length; ii++) {
     const pts = visual[ii];
     if (!pts || pts.length < 2) continue;
-    const hue = (ii * 37) % 100; // .pde: (ii * 37) % 100
+    const hue = flags.grayMode ? 0 : (ii * 37) % 100; // .pde: (ii * 37) % 100
+    const sat = flags.grayMode ? 0 : 90; // grayscale mode ('g'): no hue at all
     if (glow) {
-      one(pts, hue, 90, 100, 12, 9); // wide, faint
-      one(pts, hue, 90, 100, 28, 4.5); // narrow, brighter
+      one(pts, hue, sat, 100, 12, 9); // wide, faint
+      one(pts, hue, sat, 100, 28, 4.5); // narrow, brighter
     } else {
-      one(pts, hue, 25, 100, 100, 1.4); // crisp pale core
+      one(pts, hue, flags.grayMode ? 0 : 25, 100, 100, 1.4); // crisp pale core
     }
   }
 }
@@ -881,13 +1110,13 @@ function drawBeads() {
   for (let ii = 0; ii < visual.length; ii++) {
     const pts = visual[ii];
     if (!pts || pts.length < 2) continue;
-    const hue = (ii * 37) % 100; // same hue as the chain
+    const hue = flags.grayMode ? 0 : (ii * 37) % 100; // same hue as the chain
     const anchors = originalPathParticles ? originalPathParticles[ii] : null;
 
     // pass A — the whole string of beads: DARK dots on the glowing wire,
     // so they read against both the pale core and the saturated glow
     strokeWeight(base);
-    stroke(hue, 100, 30, 90);
+    stroke(hue, flags.grayMode ? 0 : 100, 30, 90);
     for (let i = 0; i < pts.length; i++) point(pts[i].x, pts[i].y);
 
     // pass B — beads being pulled: grow + whiten (saturation -> 0)
@@ -909,7 +1138,7 @@ function drawBeads() {
       }
       if (w <= 0.04) continue;
       strokeWeight(base + CONFIG.beadPullGrow * w);
-      stroke(hue, 100 * (1 - w), 30 + 70 * w, 100); // dark -> blazing white as w -> 1
+      stroke(hue, flags.grayMode ? 0 : 100 * (1 - w), 30 + 70 * w, 100); // dark -> blazing white as w -> 1
       point(pts[i].x, pts[i].y);
     }
   }
@@ -919,7 +1148,7 @@ function drawOriginSprings() {
   strokeWeight(1);
   let indexCol = 0; // .pde increments a float per spring
   for (const s of originSprings) {
-    stroke((indexCol + 50) % 100, 100, 100, 60);
+    stroke((indexCol + 50) % 100, flags.grayMode ? 0 : 100, 100, 60);
     line(s.a.x, s.a.y, s.b.x, s.b.y);
     indexCol++;
   }
@@ -994,6 +1223,173 @@ function clearTrail() {
   trail.rect(0, 0, CONFIG.W, CONFIG.H);
 }
 
+/* ---- web addition: MODES (key 'p'; ?mode=name) -------------------------- */
+/* Named parameter sets live in js/modes.js (window.BC_MODES): each entry is
+ * { name, params, flags? } where params overrides CONFIG keys on top of the
+ * BASELINE (the hand-tuning as loaded, incl. URL params). Selecting a mode
+ * restores the baseline first, so switching is clean; the physics rebuilds
+ * and the trail clears. Your font choice ('t') survives mode changes. */
+let CONFIG_BASE = null; // baseline snapshot (taken in setup)
+
+function snapshotBase() {
+  CONFIG_BASE = Object.assign({}, CONFIG);
+  CONFIG.modeName = 'keep';
+}
+
+function applyMode(name, rebuild = true) {
+  const list = (typeof window !== 'undefined' && window.BC_MODES) || [];
+  const m = list.find((mm) => mm && mm.name === name);
+  if (!CONFIG_BASE || !m) return false;
+  const keepFont = CONFIG.fontIndex; // font choice survives mode changes
+  Object.assign(CONFIG, CONFIG_BASE);
+  CONFIG.fontIndex = keepFont;
+  Object.assign(CONFIG, m.params || {});
+  if (m.flags) Object.assign(flags, m.flags);
+  CONFIG.modeName = m.name;
+  if (rebuild && (isLedFont() || (blobFont && blobFont.font))) {
+    initPhysics();
+    clearTrail();
+  }
+  return true;
+}
+
+function cycleMode() {
+  const list = (typeof window !== 'undefined' && window.BC_MODES) || [];
+  if (!list.length || !CONFIG_BASE) return;
+  let i = list.findIndex((m) => m.name === CONFIG.modeName);
+  i = (i + 1) % list.length;
+  applyMode(list[i].name);
+}
+
+/* ---- web addition: clock mode (key 'k') --------------------------------- */
+/* The stage shows the current time "HH:MM" (centred). The origin springs
+ * breathe with the clockEnvelope() below — the time is FORMING for longer
+ * than it is readable: a short hold centred on the cycle boundary (at 60000
+ * ms, the wall-clock minute), a slow formation before it, a slow dissolution
+ * after it, and a long abstract dwell in between where the loops live on the
+ * jitter and modulation. Text changes morph (carry-over seeding, no
+ * teleport). Toggling off restores CONFIG.input. See also updateScan(). */
+function clockString() {
+  const d = new Date();
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+/* clock breathing envelope, as a function of cycle phase p in [0,1):
+ *   - hold (readable, env = 1): clockHoldFrac, centred on p = 0 (the cycle
+ *     boundary — at 60000 ms, the wall-clock minute);
+ *   - slow formation (0 -> 1, smoothstep) just before the boundary;
+ *   - slow dissolution (1 -> 0, smoothstep) just after it;
+ *   - abstract dwell (env = 0) for the remainder — the longest phase. */
+function clockEnvelope(p) {
+  const h = clampTo(CONFIG.clockHoldFrac, 0, 0.95) / 2;
+  const attack = clampTo(CONFIG.clockAttackFrac, 0, 1);
+  const release = clampTo(CONFIG.clockReleaseFrac, 0, 1);
+  const smooth = (t) => t * t * (3 - 2 * t);
+  if (p < h || p >= 1 - h) return 1; // readable hold, centred on the boundary
+  if (release > 0 && p < h + release) return 1 - smooth((p - h) / release); // dissolution
+  const riseStart = 1 - h - attack;
+  if (attack > 0 && p >= riseStart) return smooth((p - riseStart) / attack); // formation
+  return 0; // abstract dwell
+}
+
+/* remember the current free-particle positions — a clock rebuild then starts
+ * from the tangled mess instead of teleporting to the new anchors */
+function captureCarryPool() {
+  carryPool = null;
+  if (!pathParticles) return;
+  const pool = [];
+  for (const pp of pathParticles) for (const p of pp) pool.push({ x: p.x, y: p.y });
+  if (pool.length) carryPool = pool;
+}
+
+/* seed the freshly built physics from the carried positions (at rest) */
+function seedFromCarryPool() {
+  if (!carryPool || !carryPool.length) return;
+  const n = carryPool.length;
+  let k = 0;
+  for (let ii = 0; ii < pathParticles.length; ii++) {
+    const pp = pathParticles[ii];
+    const vv = visual[ii];
+    for (let i = 0; i < pp.length; i++) {
+      const src = carryPool[k % n];
+      pp[i].set(src);
+      pp[i].clearVelocity();
+      pp[i].clearForce();
+      vv[i].x = src.x;
+      vv[i].y = src.y;
+      k++;
+    }
+  }
+  carryPool = null; // consume once
+}
+
+/* swap the active text and rebuild the physics from its outlines */
+function setInputText(text) {
+  activeInput = text;
+  if (!isLedFont() && (!blobFont || !blobFont.font)) return;
+  captureCarryPool(); // keep the tangled positions for a smooth morph
+  initPhysics();
+  if (trail) clearTrail();
+}
+
+/* centre a contour set on the stage (clock mode) */
+function centerContours(contours) {
+  let x1 = Infinity,
+    y1 = Infinity,
+    x2 = -Infinity,
+    y2 = -Infinity;
+  for (const c of contours) {
+    for (const p of c) {
+      if (p.x < x1) x1 = p.x;
+      if (p.x > x2) x2 = p.x;
+      if (p.y < y1) y1 = p.y;
+      if (p.y > y2) y2 = p.y;
+    }
+  }
+  if (!isFinite(x1)) return;
+  const dx = (CONFIG.W - (x2 - x1)) / 2 - x1;
+  const dy = (CONFIG.H - (y2 - y1)) / 2 - y1;
+  for (const c of contours) {
+    for (const p of c) {
+      p.x += dx;
+      p.y += dy;
+    }
+  }
+}
+
+/* called every frame while the mode is on: rebuild when the minute changes */
+function checkClock() {
+  if (!flags.clockOn) return;
+  const s = clockString();
+  if (s !== lastClockKey) {
+    lastClockKey = s;
+    setInputText(s);
+  }
+}
+
+/* web addition: scan mode — a virtual cursor sweeps left -> right across the
+ * stage in scanPeriodMs; the enzyme lens rides it, so the letters re-form as
+ * the beam passes (key 's'; ?scan). Mouse input is ignored while on. */
+function updateScan() {
+  if (!flags.scanMode) return;
+  const period = Math.max(200, CONFIG.scanPeriodMs);
+  const frac = (Date.now() % period) / period;
+  const R = Math.max(1.0, CONFIG.lensRadius);
+  pointer.x = -R + (CONFIG.W + 2 * R) * frac;
+  pointer.y = CONFIG.H / 2;
+}
+
+/* key 'k': on = time on stage; off = back to the configured text */
+function toggleClock() {
+  flags.clockOn = !flags.clockOn;
+  if (flags.clockOn) {
+    lastClockKey = clockString();
+    setInputText(lastClockKey);
+  } else {
+    setInputText(CONFIG.input);
+  }
+}
+
 /* web addition: cycle through the bundled fonts (all preloaded) and rebuild
  * the physics from the new letter outlines — the trail is cleared so each
  * font starts clean */
@@ -1003,10 +1399,11 @@ function cycleFont() {
   let i = CONFIG.fontIndex;
   for (let k = 0; k < n; k++) {
     i = (i + 1) % n;
-    if (blobFonts[i] && blobFonts[i].font) break;
+    const e = CONFIG.fonts && CONFIG.fonts[i];
+    if ((e && e.type === 'led') || (blobFonts[i] && blobFonts[i].font)) break;
   }
   CONFIG.fontIndex = i;
-  blobFont = blobFonts[i];
+  blobFont = blobFonts[i] || blobFont; // keep a font for cycling away from LED
   initPhysics();
   clearTrail();
 }
@@ -1021,7 +1418,7 @@ function fitCanvas() {
 
 /* map the pointer into logical canvas coordinates (.pde mouseX/mouseY) */
 function onPointerMove(e) {
-  if (!cnvEl) return;
+  if (!cnvEl || flags.scanMode) return; // scan mode ignores the mouse
   const r = cnvEl.getBoundingClientRect();
   if (!r.width || !r.height) return;
   pointer.x = (e.clientX - r.left) * (CONFIG.W / r.width);
@@ -1078,13 +1475,17 @@ function hudText() {
     '[ ]    trail fade            ' + flags.trailFade,
     ', .    visual lerp           ' + flags.visualLerp.toFixed(2),
     'b      beads                 ' + yn(flags.showBeads),
+    'k      clock mode            ' + yn(flags.clockOn),
+    's      scan mode             ' + yn(flags.scanMode),
+    'g      grayscale             ' + yn(flags.grayMode),
+    'p      mode                  ' + (CONFIG.modeName || 'keep'),
     't      font                  ' +
       (CONFIG.fonts && CONFIG.fonts[CONFIG.fontIndex] ? CONFIG.fonts[CONFIG.fontIndex].name : 'n/a'),
     'f      fullscreen',
     'h      hide this panel',
     '',
     'solver: toxiclibs.js' + (physics && physics.__fastSolver ? ' + fast overrides' : ' (raw)' + ''),
-    'text:   "' + CONFIG.input + '"   (?text=… in the URL to change)',
+    'text:   "' + activeInput + '"   (?text=… in the URL to change)',
   ].join('\n');
 }
 
@@ -1117,7 +1518,7 @@ if (typeof window !== 'undefined') {
         ready: ready,
         fps: state.fps,
         errors: state.errors.slice(),
-        input: CONFIG.input,
+        input: activeInput,
         solver: physics && physics.__fastSolver ? 'fast' : 'raw',
         contours: pathParticles ? pathParticles.length : 0,
         particles: physics ? physics.particles.length : 0,
@@ -1162,10 +1563,12 @@ if (typeof module !== 'undefined' && module.exports) {
     clampTo,
     mapRange,
     descendingSigmoid,
+    clockEnvelope,
     flattenCommands,
     anchorCaptureWeight,
     resampleClosed,
     extractContours,
+    extractLedContours,
     installFastSolver,
     resetParticles,
     buildLetterPhysics,
