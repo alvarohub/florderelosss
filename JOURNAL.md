@@ -13,7 +13,13 @@
   - `e825877` (_"Clock mode, parameter modes, grayscale, blend fixes, LED Segments font"_) — the last commit before the Oct 5–7 calibration work.
   - **2026-11-02 — the Oct 5–7 work is committed** (`js/panel.js`, scan variants, surgical per-digit clock flips, `tools/build-standalone.js`, `tools/validate-zone.js`, `Presets/`, `JOURNAL.md`, the demo videos).
   - Deliberately **not** in Git: `myblobchain_standalone.html` (2.5 MB, regenerable) and `DocumentaionPicsVideos/blobClock_1.mov` (265 MB — above GitHub's 100 MB file limit). Both are in `.gitignore`.
-- **Repository / Deployment:** `alvarohub/florderelosss` is currently **private** while calibrating (so GitHub Pages is paused until it goes public again).
+- **Repository / Deployment:** `alvarohub/florderelosss` is **public** and
+  **GitHub Pages is live** (https://alvarohub.github.io/florderelosss/,
+  deployed from `main` / root, rebuilt on every push). Verified on the public
+  URL: ready, 11 modes, 6 fonts, no console errors.
+- **Open decision:** the public page currently boots into `keep` (clock on).
+  A gallery look (`bouncing-lens`, `mitochondria-scan`, …) may become the
+  default once Alvaro has watched them on the live site.
 
 ---
 
@@ -149,7 +155,8 @@ The other five (`myblobchain_digital_Blobs_Scan`, `…_Scan2`, `digital_Vscan_mi
 - [ ] **Performance Option (Optional):** If ultra-dense `segLen <= 1` presets need higher frame rates on large `1600×900` canvases, consider enabling an allocation-free inline repulsion pass (~2–3× faster than calling `applyBehavior` per neighbor pair).
 
 ### Deployment & Companion-App Track
-- [ ] **GitHub Pages:** Make `alvarohub/florderelosss` public again and re-enable GitHub Pages (`main` branch, `/ (root)`).
+- [x] **GitHub Pages** — repo made public, Pages enabled (`main` / `/`), built and verified live at https://alvarohub.github.io/florderelosss/ (2026-11-02).
+- [ ] **Pick the public boot look** — currently `keep`; a gallery mode may become the default.
 - [ ] **macOS Screensaver / Living Wallpaper:**
   - Test `myblobchain_standalone.html` in **WebViewScreenSaver** (prebuilt `.saver` via Homebrew cask, loads local `file://` HTML) and **Plash** (living desktop wallpaper).
 - [ ] **Android Track (Later):**
@@ -183,3 +190,4 @@ _(Integrated from `IDEAS.md` — add new creative sparks here)_
 - **2026-10-05 → 2026-10-07:** Built live calibration panel (`js/panel.js`), single-file standalone bundler (`tools/build-standalone.js`), scan mode variants (`bar`/`disk`, `sweep`/`pingpong`/`bounce`/`rotate` + `tools/validate-zone.js`), fixed scaffold-side enzyme activation (`zoneWeightAt` at anchor `s.b`), implemented surgical per-digit clock minute flips with nearest-neighbor particle carry, and harvested 12 presets in `Presets/`.
 - **2026-11-02:** Created `JOURNAL.md` consolidating project state, technical invariants, milestone history, preset catalog, roadmap, and `IDEAS.md` backlog for lightweight multi-session continuity.
 - **2026-11-02 (hygiene session):** Fixed the 12 preset `name` fields; generated the 7-mode gallery into `js/modes.js` **from the preset JSONs** (no hand-copied numbers); made every mode a complete look by having `applyMode()` restore the page-load flags before applying a mode's own (`flags: {}` = page-load state) — this also fixed modes inheriting the previous mode's scan/grayscale; `applyMode()` now resizes the stage when a mode needs another canvas size, swaps the stage text when `clockOn` changes, and honours a mode's `fontIndex`; modes are applied before `createCanvas()` so `?mode=` boots at the right size. Verified in the browser: all 11 modes switch with zero console errors, canvas 1600×900 ↔ 640×480, flags reset per mode, `p` key cycling works. Rebuilt the standalone (2557 KB). Added `.gitignore` entries for the regenerable HTML and the 265 MB video.
+- **2026-11-02 (deployment):** Repo made **public**, GitHub Pages enabled (`main` / root), build succeeded and the live URL returns 200; verified running on the public URL (ready, 11 modes, 6 fonts, no console errors). Default boot look is still an open decision (`keep` for now).

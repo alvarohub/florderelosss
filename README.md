@@ -8,10 +8,9 @@ glow trail plus a crisp core. In **anchor-capture mode** (`a`), the letters
 rebuild themselves — every anchor pulls its own particle in once it drifts
 close enough (see below).
 
-**Live:** https://alvarohub.github.io/florderelosss/ — GitHub Pages ·
+**Live:** https://alvarohub.github.io/florderelosss/ — GitHub Pages
+(repo is **public**; every push to `main` redeploys) ·
 source: https://github.com/alvarohub/florderelosss
-_(repo currently **private** while calibrating — GitHub Pages is off until it
-goes public again; run locally in the meantime)_
 
 ## Run locally
 
