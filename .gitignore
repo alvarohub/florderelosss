@@ -5,3 +5,10 @@
 # editors
 .vscode/
 data/ReplicaBold.ttf
+
+# generated single-file build — regenerate with: node tools/build-standalone.js
+myblobchain_standalone.html
+
+# oversized demo video (265 MB, above GitHub's 100 MB file limit) — kept
+# locally / on Drive; the three small clips next to it ARE committed
+DocumentaionPicsVideos/blobClock_1.mov

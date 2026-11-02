@@ -8,8 +8,10 @@ glow trail plus a crisp core. In **anchor-capture mode** (`a`), the letters
 rebuild themselves — every anchor pulls its own particle in once it drifts
 close enough (see below).
 
-**Live:** https://alvarohub.github.io/myBlobChain_web/ — GitHub Pages ·
-source: https://github.com/alvarohub/myBlobChain_web
+**Live:** https://alvarohub.github.io/florderelosss/ — GitHub Pages ·
+source: https://github.com/alvarohub/florderelosss
+_(repo currently **private** while calibrating — GitHub Pages is off until it
+goes public again; run locally in the meantime)_
 
 ## Run locally
 
@@ -18,6 +20,15 @@ source: https://github.com/alvarohub/myBlobChain_web
 
 (A server is required — opening `index.html` via `file://` blocks the font fetch.)
 
+## Single-file build
+
+    node tools/build-standalone.js
+    → myblobchain_standalone.html (~2.5 MB; all fonts embedded)
+
+One self-contained file — no server, no sibling files; it opens straight from
+`file://` (double-click). This is the packaging artifact for the screensaver /
+phone track: re-run the command after any edit to `js/*` or `index.html`.
+
 ## Deploy to GitHub Pages
 
 Push this folder to a repo (keep `index.html`, `js/`, `vendor/`, `fonts/`,
@@ -25,36 +36,42 @@ Push this folder to a repo (keep `index.html`, `js/`, `vendor/`, `fonts/`,
 
 ## Controls
 
-| key       | action                                                                                        |
-| --------- | --------------------------------------------------------------------------------------------- |
-| `0`       | reset positions + clear trail                                                                 |
-| `space`   | toggle attract-to-origin                                                                      |
-| `a`       | attraction source: cursor lens ↔ anchor capture (see below)                                   |
-| `c`       | show/hide system cursor (hidden by default, like the original)                                |
-| `m`       | temporal modulation of springs & repulsion                                                    |
-| `l`       | enzyme lens on/off                                                                            |
-| `r`       | lens ring on/off                                                                              |
-| `1`       | outline-springs debug overlay                                                                 |
-| `2`       | origin-springs debug overlay                                                                  |
-| `[` `]`   | trail fade −/+ (0–100; lower = longer glow trails, each press ±10)                            |
-| `,` `.`   | visual smoothing −/+ (0 = none, 0.9 = max)                                                    |
-| `b`       | particle beads on/off — a dot on every particle; pulled ones light up                         |
-| `k`       | clock mode — the time, breathing: slow formation → short readable hold → slow dissolution     |
-| `s`       | scan mode — a slow virtual cursor sweeps left → right; the lens rides it                      |
-| `g`       | grayscale — minimal white rendering (no hues)                                                 |
-| `p`       | cycle parameter modes — see `js/modes.js` (keep / chaos / storm / still)                      |
-| `t`       | cycle fonts (Shrikhand → Pacifico → Rubik Bubbles → Chewy → Archivo Black → **LED Segments**) |
-| `f`       | fullscreen                                                                                    |
-| `h` / `?` | help panel                                                                                    |
+| key       | action                                                                                                     |
+| --------- | ---------------------------------------------------------------------------------------------------------- |
+| `0`       | reset positions + clear trail                                                                              |
+| `space`   | toggle attract-to-origin                                                                                   |
+| `a`       | attraction source: cursor lens ↔ anchor capture (see below)                                                |
+| `c`       | show/hide system cursor (hidden by default, like the original)                                             |
+| `m`       | temporal modulation of springs & repulsion                                                                 |
+| `l`       | enzyme lens on/off                                                                                         |
+| `r`       | lens ring on/off                                                                                           |
+| `1`       | outline-springs debug overlay                                                                              |
+| `2`       | origin-springs debug overlay                                                                               |
+| `3`       | anchors (scaffold) view — the points the letters form on, hue-matched to their chains                      |
+| `[` `]`   | trail fade −/+ (0–100; lower = longer glow trails, each press ±10)                                         |
+| `,` `.`   | visual smoothing −/+ (0 = none, 0.9 = max)                                                                 |
+| `b`       | particle beads on/off — a dot on every particle; pulled ones light up                                      |
+| `k`       | clock mode — the time, breathing: slow formation → short readable hold → slow dissolution                  |
+| `s`       | scan mode — an enzyme zone (disk or straight bar) sweeps the stage; letters re-form along the moving front |
+| `g`       | grayscale — minimal white rendering (no hues)                                                              |
+| `p`       | cycle parameter modes — see `js/modes.js` (keep / chaos / storm / still)                                   |
+| `t`       | cycle fonts (Shrikhand → Pacifico → Rubik Bubbles → Chewy → Archivo Black → **LED Segments**)              |
+| `o`       | parameter panel — live controls for every CONFIG value (save/load JSON)                                    |
+| `f`       | fullscreen                                                                                                 |
+| `h` / `?` | help panel                                                                                                 |
 
 URL params: `?text=hello%20world` (replaces the text) · `?anchors` (start in
 anchor-capture mode) · `?capture=NN` (capture radius in px) · `?font=name`
 (pick a bundled font at start, prefix match — `?font=pac`) · `?beads=0` (hide
 the particle beads — on by default) · `?clock` (start in clock mode) ·
-`?scan` (start with the scanning beam) · `?sweep=NN` (scan sweep in seconds —
-8 by default) · `?gray` (start grayscale) · `?period=NN` (clock breathing
-period in seconds) · `?mode=name` (start in one of the modes — see below) ·
-`?slow` (runs the raw toxiclibs.js solver — for comparison).
+`?scan` (start with the scanning zone) · `?sweep=NN` (scan sweep in seconds —
+8 by default) · `?scanshape=bar|disk` · `?scanaxis=x|y` ·
+`?scanpattern=sweep|pingpong|bounce|rotate` · `?barwidth=NN` (scan zone shape
+— see the scan section) · `?gray` (start grayscale) · `?period=NN` (clock
+breathing period in seconds) · `?mode=name` (start in one of the modes — see
+below) ·
+`?panel` (open the parameter panel at start) · `?slow` (runs the raw
+toxiclibs.js solver — for comparison).
 
 ## Anchor-capture mode (key `a`)
 
@@ -93,30 +110,97 @@ before the boundary; a slow **dissolution** (24%) lets them bloom back into
 entangled superstrings; and the remainder — the longest phase — is an
 **abstract dwell** where the loops drift on the jitter and modulation. The
 piece is about the _formation_ of the time as much as reading it. At 60000
-the phase locks to the wall clock: readable exactly on each minute. When the
-text flips, it morphs to the new time without teleporting (the rebuild seeds
-the free particles from the tangled positions). `?clock` starts the mode; `k`
+the phase locks to the wall clock: readable exactly on each minute.
+
+**Per-digit rebuild** (minute flips are surgical, not global): the clock runs
+on fixed character **slots** — every digit slot uses the advance of `0` and
+the colon its own, so the layout never moves when a glyph changes. On a
+minute flip only the slots whose character actually changed are rebuilt: the
+old digit's chains are removed from the physics (springs and behaviors
+first) and the new digit's chains are added in their place, each particle
+seeded at the nearest point of the **old digit's own cloud** (so the points
+morph into the new glyph from where the old one was — nothing teleports and
+the trail is not cleared). Untouched digits are left exactly as they were —
+mid-tangle, mid-conversation — and the rest of the clock never notices the
+change. Works for the LED seven-segment font too (its pitches are fixed by
+construction). `?clock` starts the mode; `k`
 toggles it off (back to `CONFIG.input`); `0` snaps the current time at any
 moment.
 
-**Scan alternative** (key `s`, `?scan`): instead of the global breathing, a
-virtual cursor sweeps left → right across the stage every
-`CONFIG.scanPeriodMs` (default 8 s; `?sweep=NN` in seconds) and the enzyme
-lens rides it — the time re-forms as the beam passes and re-tangles behind
-it. With clock mode on, the scan replaces the breathing. The rings are off
-by default everywhere; `r` toggles them (the scan beam included).
+**Scan alternative** (key `s`, `?scan`): instead of the global breathing, an
+enzyme **zone** sweeps across the stage every `CONFIG.scanPeriodMs` (default
+8 s; `?sweep=NN` in seconds) and the time re-forms as the zone passes and
+re-tangles behind it. The zone is either the round lens (`scanShape: disk`)
+or a straight **bar** (`scanShape: bar`) spanning the stage perpendicular to
+the sweep axis; it sweeps left↔right or top↔bottom (`scanAxis`) and marches
+one direction (`scanPattern: sweep`), goes smoothly **back & forth** on a
+sinusoid (`scanPattern: pingpong` — no jump), bounces like a DVD-logo
+**ball** (`scanPattern: bounce` — both axes reflect off the margins with
+matched speed), or **rotates** about the stage centre (`scanPattern:
+rotate` — the bar spins like a radar line, one full turn per period; the
+disk orbits the centre instead; bar width
+`scanBarWidth`). See the URL params above for the live overrides. The
+zone's influence is a flat **plateau** (two sigmoids side by side): ≈1 in
+the core, ≈0.5 at its nominal edge, fading over soft shoulders — and it is
+evaluated at the **scaffold points** (the letters' home positions): anchors
+inside the zone switch their origin springs on, so the letters re-form
+exactly where the front passes, wherever the tangled loops currently roam.
+With clock mode on, the scan replaces the breathing. The rings are off by
+default everywhere; `r` toggles them (the bar + its edge lines when scanning
+with `bar`).
 
 ## Modes (key `p`, `?mode=name`)
 
 `js/modes.js` is the collection of **modes we found that are cool** — named
 parameter sets, each overriding CONFIG keys on top of the baseline (your
-hand-tuning as loaded). `p` cycles them live (physics rebuilds, trail
-clears); `?mode=chaos` starts in one; your font choice survives the switch.
-The seed set: **keep** (`{}` — the reference hand-tuning), **chaos** and
-**storm** (more agitation + `clockStir`, which boosts the repulsion during
-the abstract dwell so the loops keep folding toward crossing, woven
-strings), **still** (calm, heavy drag). Add your own entries to that file —
-that is the point of it.
+hand-tuning as loaded). `p` cycles them live (physics rebuilds, the canvas
+resizes if the mode needs another stage size, the trail clears);
+`?mode=chaos` starts in one. A mode that names a `fontIndex` sets that font —
+a look is also a typeface; otherwise your font choice survives.
+
+Every mode declares its `flags` too, so it is a **complete look**: the
+page-load flags are restored first, then the mode's own — nothing (grayscale,
+trail fade, clock, scan) bleeds in from the mode you just left. `flags: {}`
+means "the page-load rendering state", which is what the pure physics sets
+use.
+
+- **Physics seed set:** **keep** (`{}` — the reference hand-tuning), **chaos**
+  and **storm** (more agitation + `clockStir`, which boosts the repulsion
+  during the abstract dwell so the loops keep folding toward crossing, woven
+  strings), **still** (calm, heavy drag).
+- **Gallery** — looks promoted from the calibration snapshots in `Presets/`:
+  **mitochondria-scan** (Shrikhand, fine chains, horizontal bar bouncing like
+  a DVD logo), **radar-wide** (LED under a wide spinning beam),
+  **radar-fire** (narrow radar line: beads invisible at rest, igniting only
+  where the beam sweeps), **bouncing-lens** (Chewy on a full 1600×900 stage,
+  the disk bounces, long glow), **led-vscan** (LED, grayscale, vertical
+  ping-pong bar), **aneurisms** (Pacifico, anchor capture, outline springs
+  drawn) and **clock-breathing** (the pure clock breath, no scan).
+
+Add your own entries to that file — that is the point of it. Or calibrate with
+the panel (`o`), **Save** a JSON, and promote the winner here.
+
+## Parameter panel (key `o`, calibration)
+
+A collapsible panel on the right edge with **live controls for every CONFIG
+value** (+ the runtime flags), grouped in category boxes (Text & layout,
+Canvas, Solver, Repulsion, Springs & anchors, Anchor capture, Enzyme lens,
+Temporal modulation, Clock, Scan, Beads, Rendering & toggles) — each control
+with an explanatory name and tooltip. Changes apply to the running piece
+instantly; only geometry / solver changes rebuild the physics.
+
+- **Save** downloads `myblobchain_<name>.json` — a snapshot of every
+  parameter + flag (readable, diffable, shareable).
+- **Load** reads it back (also accepts an entry copy-pasted from
+  `js/modes.js`); **Reset** returns to the page-load baseline (URL params
+  included — the font choice survives).
+- The **Mode** row mirrors the `js/modes.js` set (`p` cycles it). Any hand
+  edit marks the state as `custom ✎`; picking a mode restores it.
+- Keyboard shortcuts still work, and the widgets follow them; keys are never
+  stolen while you type in a field. `?panel` opens the panel at start (handy
+  bookmark while calibrating).
+- Ideas and open questions live in `IDEAS.md`; the project journal — status,
+  milestones, the preset catalog and the to-do list — is `JOURNAL.md`.
 
 ## Stack & fidelity
 
@@ -207,13 +291,24 @@ wider than the stage.
 - Key `1` (`renderOutlineSprings`) was toggled but never rendered in the
   original — here it actually draws the debug overlay (default off, so the
   default look matches the original).
-- Web additions: `f` fullscreen, `h` help, `t` font cycling, `b` particle
+- Enzyme activation is evaluated at each chain point's **home (scaffold)**
+  position instead of at the wandering loop particle (the .pde — and this
+  port, until Oct 5 — used the particle: a swept disk then flung entangled
+  loops toward their far-away anchors). The scan zone (`s`) uses the same
+  rule, so letters re-form exactly under the moving front.
+- Web additions: `o` parameter panel (`js/panel.js`; `?panel`; save/load
+  named JSON parameter files), `f` fullscreen, `h` help, `t` font cycling,
+  `b` particle
   beads (dark dots on every particle; the ones being pulled heat up to white,
   so the pull is visible as it travels along the chain), `g` grayscale
   (minimal white rendering), `k` clock mode (slow formation → short readable
-  hold → slow dissolution → long abstract dwell), `s` scan mode (slow
-  sweeping virtual cursor), `p` parameter modes (`js/modes.js`), `?text=`,
-  `?slow`, `?font=`, `?beads=0`, `?clock`, `?scan`, `?sweep=NN`, `?gray`,
+  hold → slow dissolution → long abstract dwell), `s` scan mode (an enzyme
+  zone — disk or straight bar — sweeps the stage; one-way or sinusoidal
+  back & forth; the letters re-form along the moving front), `p` parameter
+  modes (`js/modes.js`), `?text=`,
+  `?slow`, `?font=`, `?beads=0`, `?clock`, `?scan`, `?sweep=NN`,
+  `?scanshape=bar`, `?scanaxis=y`, `?scanpattern=pingpong`, `?barwidth=NN`,
+  `?gray`,
   `?period=NN`, `?mode=name`, letterboxed responsive scaling (the stage
   stays 1600×720 logical; DPR-independent).
 - `vendor/opentype.min.js` is **not** loaded by the page (p5 bundles opentype);
@@ -224,6 +319,7 @@ wider than the stage.
     index.html                    page: canvas + hint / help / error overlays
     js/blobchain.js               the sketch (config, contours, fast solver, p5 code)
     js/modes.js                   named parameter modes (key 'p' cycles them)
+    js/panel.js                   parameter panel UI (key 'o') — effects live in BC_CTL
     vendor/p5.min.js              p5.js 1.11.3
     vendor/toxiclibs.min.js       toxiclibs.js 0.3.3
     vendor/LICENSE-toxiclibs.txt  LGPL 2.1
@@ -231,9 +327,16 @@ wider than the stage.
     fonts/*.ttf                   bundled fonts (Shrikhand, Pacifico, Rubik
                                   Bubbles, Chewy, Archivo Black) + licences
     tools/validate.js             physics equivalence + perf validation (node)
+    tools/validate-zone.js        zone/scan unit tests (plateau profile, sweeps)
     tools/capture-demo.js         anchor-capture dynamics demo / radius tuner (node)
+    tools/build-standalone.js     single-file build → myblobchain_standalone.html
+    Presets/*.json                calibration snapshots (the panel's Save output)
+    myblobchain_standalone.html   generated single-file build (file:// ready;
+                                  git-ignored — regenerate with the command above)
     myBlobChain_V2_glow2.pde      original Processing sketch (not used by the web version)
     data/JCfg-48.vlw              original Processing font cache (not used)
+    JOURNAL.md                    project journal, milestones, preset catalog, to-dos & session handoff
+    IDEAS.md                      working notebook (integrated into JOURNAL.md)
     .nojekyll                     GitHub Pages hygiene
 
 ## Credits / licenses

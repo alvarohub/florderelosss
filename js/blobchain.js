@@ -58,11 +58,17 @@
  *   - key '1' (`renderOutlineSprings`) was toggled but never rendered in the
  *     .pde — here it actually draws the outline-spring debug overlay (default
  *     off, so the look matches the original).
- *   - additions: 'h' help panel, 'f' fullscreen, 'b' particle "beads"
+ *   - web debug additions: '2' draws the origin springs, '3' draws the
+ *     ANCHORS (the scaffold the letters form on — hue-matched to the chains;
+ *     handy for watching a digit flip travel back to its anchors).
+ *   - additions: 'h' help panel, 'o' parameter panel (live controls for every
+ *     CONFIG value + named JSON save/load — js/panel.js), 'f' fullscreen,
+ *     'b' particle "beads"
  *     (dots on every particle; pulled ones light up), 'g' grayscale (minimal
  *     white rendering), 'k' clock mode (the text becomes the time and
  *     breathes: slow formation -> short readable hold -> slow dissolution ->
- *     long abstract dwell; 's' scans a virtual cursor left->right instead;
+ *     long abstract dwell; 's' sweeps a virtual zone across the stage instead
+ *     (disk or straight bar; x or y; one-way or sinusoidal back-and-forth);
  *     'p' cycles the parameter modes in js/modes.js),
  *     't' cycles the fonts (Shrikhand -> Pacifico -> Rubik Bubbles -> Chewy
  *     -> Archivo Black -> LED Segments — a seven-segment clock display
@@ -73,7 +79,9 @@
  *     anchor pulls its own particle in once it comes within a capture radius
  *     (soft edge); neighbors follow through the outline springs and the chain
  *     zips the letter back together, hands-free. See tools/capture-demo.js.
- * URL PARAMS:  ?text=some%20text   ?slow   ?anchors   ?capture=NN   ?font=name   ?beads=0   ?clock   ?scan   ?period=NN   ?sweep=NN   ?gray   ?mode=name
+ * URL PARAMS:  ?text=some%20text   ?slow   ?anchors   ?capture=NN   ?font=name   ?beads=0   ?clock   ?scan
+ *              ?scanshape=bar|disk   ?scanaxis=x|y   ?scanpattern=sweep|pingpong|bounce|rotate   ?barwidth=NN
+ *              ?period=NN   ?sweep=NN   ?gray   ?mode=name   ?panel
  * ========================================================================== */
 'use strict';
 
@@ -123,7 +131,11 @@ const CONFIG = {
   /* extra repulsion during the abstract dwell (0 = off): scales with
    * (1 - envelope) so the loops keep folding toward crossing, woven strings */
   clockStir: 0,
-  scanPeriodMs: 8000, // scan mode: virtual cursor sweep, left->right in this period (?sweep=NN seconds)
+  scanPeriodMs: 8000, // scan mode: virtual pointer sweep, left->right in this period (?sweep=NN seconds)
+  scanShape: 'disk', // 'disk' | 'bar' — zone the scan rides: round lens or a straight beam (?scanshape=bar)
+  scanAxis: 'x', // 'x' | 'y' — sweep direction; a bar spans the OTHER axis (?scanaxis=y)
+  scanPattern: 'sweep', // 'sweep' one way | 'pingpong' sinusoidal | 'bounce' DVD-logo ball | 'rotate' spinning beam / orbiting lens (?scanpattern=)
+  scanBarWidth: 240, // bar mode: full bar width (weight 1 in the core, 0.5 at the edges) (?barwidth=NN)
   /* bundled fonts — key 't' cycles live; ?font=name picks one at start */
   fonts: [
     { name: 'Shrikhand', url: 'fonts/Shrikhand-Regular.ttf' },
@@ -179,6 +191,15 @@ if (_params) {
     const _fi = CONFIG.fonts.findIndex((f) => f.name.toLowerCase().startsWith(_fn));
     if (_fi >= 0) CONFIG.fontIndex = _fi;
   }
+  /* scan variants — all guarded: _params is null on a plain URL (no query) */
+  const _ss = (_params.get('scanshape') || '').toLowerCase();
+  if (_ss === 'disk' || _ss === 'bar') CONFIG.scanShape = _ss;
+  const _sa = (_params.get('scanaxis') || '').toLowerCase();
+  if (_sa === 'x' || _sa === 'y') CONFIG.scanAxis = _sa;
+  const _sp = (_params.get('scanpattern') || '').toLowerCase();
+  if (_sp === 'sweep' || _sp === 'pingpong' || _sp === 'bounce' || _sp === 'rotate') CONFIG.scanPattern = _sp;
+  const _sbw = parseFloat(_params.get('barwidth'));
+  if (_sbw > 0) CONFIG.scanBarWidth = _sbw;
 }
 CONFIG.slow = !!CONFIG.slow;
 
@@ -193,6 +214,7 @@ const flags = {
   showLensRing: false, // .pde: showLensRing
   renderOutlineSprings: false, // .pde default was true but never rendered; here it draws, so start off
   renderOriginSprings: false, // .pde: renderOriginSprings
+  showAnchors: false, // web addition: draw the ANCHORS (the scaffold) — key '3', for watching the pull
   /* trail fade = the per-frame black-rect alpha (0..100): LOWER = longer glow
    * trails. The .pde's 255 clamp was dead above 100 (colorMode HSB/100 caps
    * alpha) — fixed here so every key press actually changes the blending. */
@@ -221,6 +243,30 @@ function clampTo(v, lo, hi) {
 }
 function mapRange(v, a, b, c, d) {
   return c + (d - c) * ((v - a) / (b - a));
+}
+
+/* Plateau weight: the influence profile of the enzyme zone — 1 in the core,
+ * ≈0.5 at distance `half` (the nominal edge; →0.5 exactly as half/softness
+ * grows), soft shoulders of width ~`softness`, ~0 beyond. Built from TWO sigmoids side by side (a rising one
+ * at -half, a falling one at +half — their difference), which gives a true
+ * FLAT core instead of a gaussian dome. Cross-section:
+ *
+ *         ┌───────────┐
+ *         │  plateau  │
+ *         └─╮       ╭─┘   (sigmoid shoulders of width ~softness)
+ *      ─────╯       ╰─────
+ *        -half     +half
+ *
+ * This is the influence of the enzyme lens (disk, d = radial distance) and
+ * of the scan beam (bar, d = offset along the sweep axis only). */
+function plateauWeight(d, half, softness) {
+  const h = Math.max(1.0, half);
+  const s = clampTo(softness, 0.5, 4 * h);
+  if (d >= h + 8 * s) return 0; // far outside: exactly zero (cheap + exact)
+  const R = (x) => 1 / (1 + Math.exp(-clampTo(x, -60, 60)));
+  const num = R((d + h) / s) - R((d - h) / s);
+  const den = R(h / s) - R(-h / s);
+  return clampTo(num / den, 0, 1); // 1 at the centre, ≈0.5 at d = h (→0.5 as h/s grows)
 }
 
 /* .pde: descendingSigmoid() — decreasing 1 -> 0 sigmoid */
@@ -698,6 +744,7 @@ let pathParticles = null; // .pde: VerletParticle2D[][] pathParticles
 let originalPathParticles = null; // .pde: anchors
 let visual = null; // .pde: PVector[][] visual (smoothed)
 let originSprings = [];
+let originSpringsOn = false; // web addition: are the origin springs IN the physics right now? (tracked, never guessed)
 let originActivations = []; // per origin spring: current capture/lens weight (for drawing)
 let outlineSprings = [];
 let repulsionBehaviors = [];
@@ -709,6 +756,9 @@ let ready = false;
 let activeInput = CONFIG.input; // web addition: the text currently built (clock mode swaps it)
 let lastClockKey = null; // web addition: last built "HH:MM" (clock mode)
 let carryPool = null; // web addition: tangled positions carried over a clock rebuild
+let clockSlots = null; // web addition: per-character clock build (fixed slots, see rebuildClockSlot)
+let clockLayout = null; // web addition: the fixed slot layout (size, dy, xs) of the active clock string
+let clockSlotSerial = 0; // web addition: build id per slot — an UNCHANGED slot keeps its id across a minute flip
 const pointer = { x: 0, y: 0 }; // .pde: mouseX / mouseY (logical canvas px)
 const state = { fps: 0, errors: [] };
 let _fpsFrames = 0,
@@ -718,10 +768,20 @@ let _fpsFrames = 0,
 
 function preload() {
   const list = CONFIG.fonts || [{ name: 'Archivo Black', url: CONFIG.fontUrl }];
-  blobFonts = list.map((f) => (f.url ? loadFont(f.url) : null)); // the LED entry has no ttf
+  /* single-file build (tools/build-standalone.js): fonts embedded as base64
+   * data URIs in window.BC_FONT_DATA — prefer them over file paths so the
+   * page also runs from file:// with no server and no sibling files */
+  const embed = typeof window !== 'undefined' && window.BC_FONT_DATA ? window.BC_FONT_DATA : null;
+  blobFonts = list.map((f) => (f.url ? loadFont(embed && embed[f.url] ? embed[f.url] : f.url) : null)); // the LED entry has no ttf
 }
 
 function setup() {
+  /* a mode may change the canvas size, so it is applied BEFORE the canvas and
+   * the trail buffer are created (no rebuild here: initPhysics follows) */
+  snapshotBase(); // modes restore to this baseline
+  const _m = _params ? _params.get('mode') : null;
+  if (!_m || !applyMode(_m, false)) applyMode('keep', false); // ?mode=name
+
   const cnv = createCanvas(CONFIG.W, CONFIG.H);
   cnv.parent('sketch');
   cnvEl = cnv.elt;
@@ -754,10 +814,6 @@ function setup() {
   trail.colorMode(HSB, 100);
   trail.background(0);
 
-  snapshotBase(); // modes restore to this baseline
-  const _m = _params ? _params.get('mode') : null;
-  if (!_m || !applyMode(_m, false)) applyMode('keep', false); // ?mode=name (no rebuild: initPhysics follows)
-
   if (flags.clockOn) {
     activeInput = clockString(); // ?clock: start on the current time
     lastClockKey = activeInput;
@@ -771,6 +827,7 @@ function setup() {
     if (hintEl) hintEl.style.opacity = '0';
   }, 8000);
   ready = true;
+  if (typeof window !== 'undefined' && window.BCPanel) window.BCPanel.init(); // calibration panel (key 'o')
 }
 
 function windowResized() {
@@ -783,45 +840,60 @@ function initPhysics() {
   physics.setWorldBounds(new toxi.geom.Rect(0, 0, CONFIG.W, CONFIG.H)); // .pde: Rect(0,0,width,height)
   physics.setDrag(CONFIG.drag); // .pde: setDrag(0.4)
 
-  let contours;
-  if (isLedFont()) {
-    // LED display: digits + ':' only; with no digits at all, show a live
-    // clock instead (nothing else would be drawn)
-    const maxW = CONFIG.W - CONFIG.offsetX - 40;
-    contours = extractLedContours(activeInput, CONFIG.textSize, CONFIG.segLen, CONFIG.offsetX, CONFIG.offsetY, maxW);
-    if (contours.length === 0) {
-      contours = extractLedContours(
-        clockString(),
+  /* clock mode (web addition): fixed per-character slots — a minute flip
+   * then rebuilds only the digits that changed (see rebuildClockSlot) */
+  clockSlots = null;
+  const slots = flags.clockOn ? buildClockSlots() : null;
+  if (slots && slots.length) {
+    for (const s of slots) s.built = buildLetterPhysics(physics, s.contours, CONFIG);
+    clockSlots = slots;
+    flattenClockSlots();
+  } else {
+    let contours;
+    if (isLedFont()) {
+      // LED display: digits + ':' only; with no digits at all, show a live
+      // clock instead (nothing else would be drawn)
+      const maxW = CONFIG.W - CONFIG.offsetX - 40;
+      contours = extractLedContours(activeInput, CONFIG.textSize, CONFIG.segLen, CONFIG.offsetX, CONFIG.offsetY, maxW);
+      if (contours.length === 0) {
+        contours = extractLedContours(
+          clockString(),
+          CONFIG.textSize,
+          CONFIG.segLen,
+          CONFIG.offsetX,
+          CONFIG.offsetY,
+          maxW,
+        );
+      }
+    } else {
+      contours = extractContours(
+        blobFont.font,
+        activeInput,
         CONFIG.textSize,
         CONFIG.segLen,
         CONFIG.offsetX,
         CONFIG.offsetY,
-        maxW,
+        CONFIG.W - CONFIG.offsetX - 40,
       );
     }
-  } else {
-    contours = extractContours(
-      blobFont.font,
-      activeInput,
-      CONFIG.textSize,
-      CONFIG.segLen,
-      CONFIG.offsetX,
-      CONFIG.offsetY,
-      CONFIG.W - CONFIG.offsetX - 40,
-    );
+
+    // clock mode fallback (no slots: e.g. a non-digit clock string): centre it
+    if (flags.clockOn) centerContours(contours);
+
+    const built = buildLetterPhysics(physics, contours, CONFIG);
+    pathParticles = built.pathParticles;
+    originalPathParticles = built.originalPathParticles;
+    visual = built.visual;
+    originSprings = built.originSprings;
+    outlineSprings = built.outlineSprings;
+    originActivations = new Array(originSprings.length).fill(0);
+    repulsionBehaviors = built.repulsionBehaviors;
   }
 
-  // clock mode (web addition): centre the time on the stage
-  if (flags.clockOn) centerContours(contours);
-
-  const built = buildLetterPhysics(physics, contours, CONFIG);
-  pathParticles = built.pathParticles;
-  originalPathParticles = built.originalPathParticles;
-  visual = built.visual;
-  originSprings = built.originSprings;
-  outlineSprings = built.outlineSprings;
-  originActivations = new Array(originSprings.length).fill(0);
-  repulsionBehaviors = built.repulsionBehaviors;
+  /* fresh springs from any full (re)build: none of them is in the physics
+   * yet — the applyAttractToOrigin() at the end of this function adds them
+   * all when the flag is on (membership is TRACKED, see that function) */
+  originSpringsOn = false;
 
   if (CONFIG.fastSolver && !CONFIG.slow) {
     installFastSolver(physics, {
@@ -837,6 +909,40 @@ function initPhysics() {
 
   applyAttractToOrigin();
   applyEnzymeLens();
+}
+
+/* rebuild the physics from the current CONFIG (geometry / solver changes) */
+function rebuildStage() {
+  initPhysics();
+  clearTrail();
+}
+
+/* re-install the fast-solver grid (its cell size follows the repulsion
+ * radius) — called when the radius moves so the 3x3-cell search stays exact
+ * and fast (the grid falls back to a full sweep for radii > cellSize) */
+function reinstallFastSolver() {
+  if (!physics || !(CONFIG.fastSolver && !CONFIG.slow)) return;
+  installFastSolver(physics, {
+    cellSize: Math.max(4, CONFIG.repulsionRadius),
+    worldWidth: CONFIG.W,
+    worldHeight: CONFIG.H,
+  });
+}
+
+/* resize the stage (canvas + trail buffer) and rebuild — used by the panel's
+ * Width / Height controls */
+function resizeStage(w, h) {
+  CONFIG.W = w;
+  CONFIG.H = h;
+  resizeCanvas(w, h); // p5 keeps the drawing state; the backing store changes
+  if (trail && trail.remove) trail.remove();
+  trail = createGraphics(w, h);
+  trail.pixelDensity(1);
+  trail.colorMode(HSB, 100);
+  trail.background(0);
+  fitCanvas();
+  initPhysics();
+  clearTrail();
 }
 
 /* .pde draw() — same order of operations */
@@ -894,6 +1000,7 @@ function draw() {
   // 4. debug overlays
   if (flags.renderOriginSprings) drawOriginSprings(null);
   if (flags.renderOutlineSprings) drawOutlineSprings(null);
+  if (flags.showAnchors) drawAnchors(); // '3': the scaffold the letters form on
 
   // 5. lens / capture indicator — off by default; 'r' toggles it (in scan
   //    mode too: the beam just draws its ring when enabled)
@@ -906,9 +1013,13 @@ function draw() {
   updateFps();
 }
 
-/* .pde keyPressed() — same keys, plus web additions (f, h) */
+/* .pde keyPressed() — same keys, plus web additions (f, h, o) */
 function keyPressed() {
   if (!ready) return;
+  /* never steal keys while the user types into the parameter panel (or any
+   * form control) — p5 listens on window and would swallow them */
+  const _ae = typeof document !== 'undefined' ? document.activeElement : null;
+  if (_ae && _ae.tagName && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(_ae.tagName)) return;
   if (key === '0') {
     resetPositionsToOrigin();
   } else if (key === ' ') {
@@ -928,6 +1039,8 @@ function keyPressed() {
     flags.renderOutlineSprings = !flags.renderOutlineSprings;
   } else if (key === '2') {
     flags.renderOriginSprings = !flags.renderOriginSprings;
+  } else if (key === '3') {
+    flags.showAnchors = !flags.showAnchors; // web addition: show the anchors (the scaffold)
   } else if (key === '[') {
     flags.trailFade = Math.max(0, flags.trailFade - 10); // longer glow trails (−10, 0..100)
   } else if (key === ']') {
@@ -948,6 +1061,8 @@ function keyPressed() {
     flags.visualLerp = Math.min(0.9, flags.visualLerp + 0.05);
   } else if (key === 't' || key === 'T') {
     cycleFont(); // web addition
+  } else if (key === 'o' || key === 'O') {
+    if (window.BCPanel) BCPanel.toggle(); // web addition: parameter panel
   } else if (key === 'f' || key === 'F') {
     fullscreen(!fullscreen()); // web addition
   } else if (key === 'h' || key === 'H' || key === '?') {
@@ -956,6 +1071,7 @@ function keyPressed() {
     return;
   }
   updateHud();
+  if (window.BCPanel) BCPanel.sync(); // keep the panel widgets in step with the keys
   return false;
 }
 
@@ -963,16 +1079,22 @@ function keyPressed() {
 
 function applyAttractToOrigin() {
   if (originSprings.length === 0) return;
-  const inPhysics = physics.springs.indexOf(originSprings[0]) >= 0;
-  if (inPhysics === flags.attractToOrigin) return;
+  if (originSpringsOn === flags.attractToOrigin) return;
   for (const s of originSprings) {
     if (flags.attractToOrigin) physics.addSpring(s);
     else physics.removeSpring(s);
   }
+  originSpringsOn = flags.attractToOrigin;
 }
 /* Origin-spring drive — .pde applyEnzymeLens(), generalized to two sources:
- *   'cursor' mode: weight = enzymeWeight(particle position) — the original
- *                  mouse-centred enzyme lens;
+ *   'cursor' mode: weight = zoneWeightAt(ANCHOR position) — the zone (cursor
+ *                  lens or scan beam) activates the SCAFFOLD points inside
+ *                  it; their springs pull the free particles home from
+ *                  wherever the loops roam. (Until now — as in the .pde — the
+ *                  weight was evaluated at the LOOP particle instead: a
+ *                  swept zone then grabbed whichever particles happened to
+ *                  be under it and flung them toward anchors far away — the
+ *                  "loops jump to the other side" artifact.)
  *   'anchor' mode: weight = anchorCaptureWeight(|particle − its own anchor|)
  *                  — hands-free capture: once a blob particle drifts within
  *                  the capture radius of its anchor it gets pulled home; its
@@ -1012,7 +1134,7 @@ function applyEnzymeLens() {
             CONFIG.anchorCaptureSoftness,
             CONFIG.anchorCaptureMidpointFrac,
           )
-        : enzymeWeight(s.a.x, s.a.y);
+        : zoneWeightAt(s.b.x, s.b.y); // <- the SCAFFOLD point, not the particle
     }
     originActivations[i] = activation;
     s.setStrength(CONFIG.maxAnchorStrength * activation);
@@ -1029,21 +1151,28 @@ function applyEnzymeLens() {
   }
 }
 
-/* .pde enzymeWeight() — smoothstepped, normalized lens weight */
-function enzymeWeight(x, y) {
+/* enzyme zone influence at a stage point — replaces the old enzymeWeight().
+ * The zone the pointer drives is either the DISK (the cursor lens; also the
+ * scan with scanShape 'disk') or the BAR (scan with scanShape 'bar'): a
+ * straight beam perpendicular to the sweep axis, spanning the whole stage on
+ * the other axis — weight depends ONLY on the distance along the sweep axis.
+ * Profile: plateauWeight() — flat core, soft sigmoid shoulders. */
+function zoneWeightAt(x, y) {
   if (!flags.lensEnabled) return 0;
-  if (pointer.x < 0 || pointer.x >= CONFIG.W || pointer.y < 0 || pointer.y >= CONFIG.H) return 0;
-
-  const radius = Math.max(1.0, CONFIG.lensRadius);
-  const softness = clampTo(CONFIG.lensSoftness, 1.0, radius);
+  if (flags.scanMode && CONFIG.scanShape === 'bar') {
+    const half = Math.max(1.0, CONFIG.scanBarWidth) / 2;
+    if (CONFIG.scanPattern === 'rotate') {
+      // the spinning line: weight = perpendicular distance to the line
+      // through the stage centre at pointer.angle (kept fresh by updateScan)
+      const th = pointer.angle || 0;
+      const d = Math.abs((y - CONFIG.H / 2) * Math.cos(th) - (x - CONFIG.W / 2) * Math.sin(th));
+      return plateauWeight(d, half, CONFIG.lensSoftness);
+    }
+    const d = CONFIG.scanAxis === 'y' ? Math.abs(y - pointer.y) : Math.abs(x - pointer.x);
+    return plateauWeight(d, half, CONFIG.lensSoftness);
+  }
   const d = Math.hypot(x - pointer.x, y - pointer.y);
-  if (d >= radius) return 0;
-
-  const midpoint = radius * CONFIG.lensMidpointFrac;
-  const value = descendingSigmoid((d - midpoint) / softness);
-  const centre = descendingSigmoid(-midpoint / softness);
-  const edge = descendingSigmoid((radius - midpoint) / softness);
-  return clampTo((value - edge) / (centre - edge), 0, 1);
+  return plateauWeight(d, Math.max(1.0, CONFIG.lensRadius) * CONFIG.lensMidpointFrac, CONFIG.lensSoftness);
 }
 
 /* --- rendering helpers (same draw order/weights/alphas as the .pde) ------- */
@@ -1096,22 +1225,25 @@ function drawAllPaths(g, glow) {
   }
 }
 
-/* web addition: the particle "beads" — every particle drawn as a dot on the
- * smoothed chain, so the letter reads as a string of beads. Beads currently
- * being pulled (activation > 0) grow and whiten; activation is evaluated at
- * the particle position with the SAME weight function the physics uses
- * (enzymeWeight in cursor mode, anchorCaptureWeight in anchor mode), so what
- * lights up is exactly what is being pulled. Watch a pulled bead drag its
- * neighbours along through the outline springs. */
+/* the particle "beads" — every particle drawn as a dot on the smoothed
+ * chain. Beads currently being pulled grow and whiten; the activation is
+ * read straight from originActivations[], the per-spring weight the physics
+ * applied this frame — so in cursor/scan mode it is the SCAFFOLD-driven
+ * zone weight (anchors inside the zone light their beads, wherever the
+ * loops roam), in anchor mode the capture weight, and while the clock
+ * breathes the envelope (the whole string crystallises together at the
+ * readable hold). */
 function drawBeads() {
   if (!visual) return;
-  const anchorMode = flags.attractMode === 'anchor';
   const base = CONFIG.beadSize;
+  let beadIdx = 0; // walks originActivations in the same flat order as the particles
   for (let ii = 0; ii < visual.length; ii++) {
     const pts = visual[ii];
-    if (!pts || pts.length < 2) continue;
+    if (!pts || pts.length < 2) {
+      beadIdx += pts ? pts.length : 0; // a skipped contour still owns its springs
+      continue;
+    }
     const hue = flags.grayMode ? 0 : (ii * 37) % 100; // same hue as the chain
-    const anchors = originalPathParticles ? originalPathParticles[ii] : null;
 
     // pass A — the whole string of beads: DARK dots on the glowing wire,
     // so they read against both the pale core and the saturated glow
@@ -1119,23 +1251,12 @@ function drawBeads() {
     stroke(hue, flags.grayMode ? 0 : 100, 30, 90);
     for (let i = 0; i < pts.length; i++) point(pts[i].x, pts[i].y);
 
-    // pass B — beads being pulled: grow + whiten (saturation -> 0)
+    // pass B — beads being pulled: grow + whiten. The weight comes straight
+    // from originActivations (same flat order as the particles) — exactly
+    // what the physics is pulling this frame.
     for (let i = 0; i < pts.length; i++) {
-      let w = 0;
-      if (flags.lensEnabled) {
-        w =
-          anchorMode && anchors
-            ? anchorCaptureWeight(
-                pts[i].x,
-                pts[i].y,
-                anchors[i].x,
-                anchors[i].y,
-                CONFIG.anchorCaptureRadius,
-                CONFIG.anchorCaptureSoftness,
-                CONFIG.anchorCaptureMidpointFrac,
-              )
-            : enzymeWeight(pts[i].x, pts[i].y);
-      }
+      const w = beadIdx < originActivations.length ? originActivations[beadIdx] : 0;
+      beadIdx++;
       if (w <= 0.04) continue;
       strokeWeight(base + CONFIG.beadPullGrow * w);
       stroke(hue, flags.grayMode ? 0 : 100 * (1 - w), 30 + 70 * w, 100); // dark -> blazing white as w -> 1
@@ -1161,12 +1282,77 @@ function drawOutlineSprings() {
   for (const s of outlineSprings) line(s.a.x, s.a.y, s.b.x, s.b.y);
 }
 
+/* web addition (key '3'): draw the ANCHORS — the scaffold the letters form
+ * on. Hue-matched to their chains (same (ii*37)%100 in flat order), so you
+ * can tell which anchor belongs to which contour: watch a digit flip and its
+ * anchors stay put while the carried points travel home to them. */
+function drawAnchors() {
+  if (!originalPathParticles) return;
+  strokeWeight(2.5);
+  for (let ii = 0; ii < originalPathParticles.length; ii++) {
+    const hue = flags.grayMode ? 0 : (ii * 37) % 100;
+    stroke(hue, flags.grayMode ? 0 : 100, 100, 85);
+    const aa = originalPathParticles[ii];
+    for (let i = 0; i < aa.length; i++) point(aa[i].x, aa[i].y);
+  }
+}
+
 function drawLensRing() {
+  /* the scan beam (scanShape 'bar'): a straight line across the stage, plus
+   * two faint lines at the plateau's 0.5 edges (half the bar width away) */
+  if (flags.scanMode && CONFIG.scanShape === 'bar') {
+    const half = Math.max(1.0, CONFIG.scanBarWidth) / 2;
+    if (CONFIG.scanPattern === 'rotate') {
+      // the spinning beam: main line + the two plateau-edge lines at ±half
+      const cx = CONFIG.W / 2,
+        cy = CONFIG.H / 2;
+      const th = pointer.angle || 0;
+      const ux = Math.cos(th),
+        uy = Math.sin(th);
+      const L = Math.hypot(CONFIG.W, CONFIG.H); // stage diagonal: reaches every corner
+      noFill();
+      strokeWeight(1);
+      stroke(0, 0, 85, 40);
+      line(cx - (ux * L) / 2, cy - (uy * L) / 2, cx + (ux * L) / 2, cy + (uy * L) / 2);
+      stroke(0, 0, 100, 22);
+      line(
+        cx - (ux * L) / 2 - uy * half,
+        cy - (uy * L) / 2 + ux * half,
+        cx + (ux * L) / 2 - uy * half,
+        cy + (uy * L) / 2 + ux * half,
+      );
+      line(
+        cx - (ux * L) / 2 + uy * half,
+        cy - (uy * L) / 2 - ux * half,
+        cx + (ux * L) / 2 + uy * half,
+        cy + (uy * L) / 2 - ux * half,
+      );
+      strokeWeight(2);
+      stroke(0, 0, 100, 70);
+      point(cx, cy);
+      return;
+    }
+    const vertical = CONFIG.scanAxis !== 'y'; // sweep along x -> the bar is vertical
+    noFill();
+    strokeWeight(1);
+    stroke(0, 0, 85, 40);
+    if (vertical) line(pointer.x, 0, pointer.x, CONFIG.H);
+    else line(0, pointer.y, CONFIG.W, pointer.y);
+    stroke(0, 0, 100, 22);
+    if (vertical) {
+      line(pointer.x - half, 0, pointer.x - half, CONFIG.H);
+      line(pointer.x + half, 0, pointer.x + half, CONFIG.H);
+    } else {
+      line(0, pointer.y - half, CONFIG.W, pointer.y - half);
+      line(0, pointer.y + half, CONFIG.W, pointer.y + half);
+    }
+    return;
+  }
   noFill();
   strokeWeight(1);
   stroke(0, 0, 85, 40);
   ellipse(pointer.x, pointer.y, CONFIG.lensRadius * 2, CONFIG.lensRadius * 2);
-  // faint inner ring at the sigmoid midpoint, so the "core" is visible
+  // faint inner ring at the 0.5 (plateau edge) distance, so the core is visible
   stroke(0, 0, 100, 25);
   ellipse(
     pointer.x,
@@ -1230,9 +1416,11 @@ function clearTrail() {
  * restores the baseline first, so switching is clean; the physics rebuilds
  * and the trail clears. Your font choice ('t') survives mode changes. */
 let CONFIG_BASE = null; // baseline snapshot (taken in setup)
+let FLAGS_BASE = null; // same, for the runtime flags (modes + panel Reset)
 
 function snapshotBase() {
   CONFIG_BASE = Object.assign({}, CONFIG);
+  FLAGS_BASE = Object.assign({}, flags);
   CONFIG.modeName = 'keep';
 }
 
@@ -1243,13 +1431,28 @@ function applyMode(name, rebuild = true) {
   const keepFont = CONFIG.fontIndex; // font choice survives mode changes
   Object.assign(CONFIG, CONFIG_BASE);
   CONFIG.fontIndex = keepFont;
+  /* `flags` (even an empty object) makes the mode a COMPLETE look: restore
+   * the page-load flags first, so nothing (grayscale, trail fade, clock,
+   * scan...) bleeds in from the mode we are leaving. A mode that omits
+   * `flags` entirely leaves your rendering taste untouched. */
+  if (m.flags) Object.assign(flags, FLAGS_BASE || {}, m.flags);
   Object.assign(CONFIG, m.params || {});
-  if (m.flags) Object.assign(flags, m.flags);
+  /* the params may name a font (a look is also a typeface) */
+  if (CONFIG.fonts && blobFonts.length) blobFont = blobFonts[CONFIG.fontIndex] || blobFont;
   CONFIG.modeName = m.name;
   if (rebuild && (isLedFont() || (blobFont && blobFont.font))) {
-    initPhysics();
-    clearTrail();
+    // the stage text follows the flags: clock on -> the time, else the text
+    activeInput = flags.clockOn ? (lastClockKey = clockString()) : CONFIG.input;
+    // a mode may resize the stage (its physics needs the matching bounds)
+    if (cnvEl && (cnvEl.width !== CONFIG.W || cnvEl.height !== CONFIG.H)) resizeStage(CONFIG.W, CONFIG.H);
+    else {
+      initPhysics();
+      clearTrail();
+    }
   }
+  applyCursor();
+  updateHud();
+  if (typeof window !== 'undefined' && window.BCPanel) window.BCPanel.sync();
   return true;
 }
 
@@ -1323,6 +1526,209 @@ function seedFromCarryPool() {
   carryPool = null; // consume once
 }
 
+/* --- web addition: fixed clock slots + per-digit rebuild ----------------- */
+/* The clock text always has the same shape (HH:MM), so every character gets
+ * a FIXED slot: all digit slots use the advance of '0' and the colon its own,
+ * no matter which glyph currently fills them — the layout never moves when a
+ * digit changes. A minute flip then rebuilds ONLY the slots whose character
+ * changed: the old digit's chains are removed from the physics (springs and
+ * behaviors first — VerletPhysics2D.removeParticle() does not detach them)
+ * and the new digit's chains are added in their place, seeded from the old
+ * digit's OWN point cloud (nearest-neighbour carry — the points morph into
+ * the new glyph instead of teleporting). The unchanged digits are not touched
+ * at all: no re-centring, no re-seeding — the rest of the clock keeps
+ * entangling undisturbed. The trail is NOT cleared on a digit flip. */
+
+/* advance width of a character in px (opentype.js: getAdvanceWidth when the
+ * bundled version has it, else the glyph advance in font units × size/em) */
+function advanceOf(font, ch, size) {
+  if (typeof font.getAdvanceWidth === 'function') return font.getAdvanceWidth(ch, size);
+  const g = font.charToGlyph ? font.charToGlyph(ch) : null;
+  return (((g && g.advanceWidth) || 500) / (font.unitsPerEm || 1000)) * size;
+}
+
+/* one character's contours at an explicit pen position (no auto-fit — the
+ * slot plan has already fitted the size) */
+function extractContoursAt(font, text, size, segLen, x, y) {
+  const path = font.getPath(text, x, y, size);
+  const raw = flattenCommands(path.commands);
+  const contours = [];
+  for (const pts of raw) {
+    const rs = resampleClosed(pts, segLen);
+    if (rs.length >= 3) contours.push(rs);
+  }
+  return contours;
+}
+
+/* the fixed slot plan (ttf fonts): per-char widths, slot x positions, the
+ * auto-fitted size and the vertical offset — identical for every minute */
+function clockSlotPlanTTF(font, text) {
+  const chars = [...text];
+  const maxW = CONFIG.W - 40; // the clock is stage-centred; offsetX/Y do not apply
+  const advDig = advanceOf(font, '0', CONFIG.textSize);
+  const advCol = advanceOf(font, ':', CONFIG.textSize);
+  let widths = chars.map((ch) => (ch === ':' ? advCol : advDig));
+  let total = widths.reduce((a, b) => a + b, 0);
+  let size = CONFIG.textSize;
+  if (maxW > 0 && total > maxW) {
+    size = CONFIG.textSize * (maxW / total); // the advance scales linearly with size
+    const k = size / CONFIG.textSize;
+    widths = widths.map((w) => w * k);
+    total = maxW;
+  }
+  const bb = font.getPath('0', 0, 0, size).getBoundingBox();
+  const dy = (CONFIG.H - (bb.y2 - bb.y1)) / 2 - bb.y1; // centre on the ink of '0'
+  const xs = [];
+  let x = (CONFIG.W - total) / 2;
+  for (const w of widths) {
+    xs.push(x);
+    x += w;
+  }
+  return { chars, size, dy, xs, widths };
+}
+
+/* the same idea for the LED "font": its pitches are fixed by construction
+ * (digit advance / colon cell), so the layout is exact and static */
+function clockSlotPlanLED(text) {
+  const chars = [...text];
+  const maxW = CONFIG.W - 40;
+  const h0 = Math.max(10, CONFIG.textSize);
+  const w0 = h0 * 0.62;
+  const t0 = w0 * 0.115;
+  const adv0 = w0 + t0 * 1.6;
+  const col0 = t0 * 2.2 + t0 * 1.6;
+  let widths = chars.map((ch) => (ch === ':' ? col0 : adv0));
+  let total = widths.reduce((a, b) => a + b, 0);
+  let size = CONFIG.textSize;
+  if (maxW > 0 && total > maxW) {
+    size = CONFIG.textSize * (maxW / total);
+    const k = size / CONFIG.textSize;
+    widths = widths.map((w) => w * k);
+    total = maxW;
+  }
+  const H = Math.max(10, size); // the digit cell height extractLedContours will use
+  const dy = (CONFIG.H - H) / 2 + H; // baseline centred on the stage
+  const xs = [];
+  let x = (CONFIG.W - total) / 2;
+  for (const w of widths) {
+    xs.push(x);
+    x += w;
+  }
+  return { chars, size, dy, xs, widths };
+}
+
+/* build the per-character slots for the active clock string, or null when
+ * not applicable (the caller then falls back to the whole-text path) */
+function buildClockSlots() {
+  const text = activeInput;
+  if (!/^[0-9:]+$/.test(text)) return null; // fixed slots are for digit clocks
+  const led = isLedFont();
+  const font = led ? null : blobFont && blobFont.font;
+  if (!led && !font) return null;
+  const plan = led ? clockSlotPlanLED(text) : clockSlotPlanTTF(font, text);
+  const slots = [];
+  for (let i = 0; i < plan.chars.length; i++) {
+    const contours = led
+      ? extractLedContours(plan.chars[i], plan.size, CONFIG.segLen, plan.xs[i], plan.dy, 1e9)
+      : extractContoursAt(font, plan.chars[i], plan.size, CONFIG.segLen, plan.xs[i], plan.dy);
+    slots.push({ char: plan.chars[i], contours, built: null, id: ++clockSlotSerial });
+  }
+  clockLayout = plan;
+  return slots;
+}
+
+/* re-derive the flat arrays the sketch draws from (same order: slot by slot,
+ * contour by contour — drawBeads' beadIdx walk relies on it) */
+function flattenClockSlots() {
+  pathParticles = [];
+  originalPathParticles = [];
+  visual = [];
+  originSprings = [];
+  outlineSprings = [];
+  repulsionBehaviors = [];
+  for (const s of clockSlots) {
+    const b = s.built;
+    for (const pp of b.pathParticles) pathParticles.push(pp);
+    for (const pp of b.originalPathParticles) originalPathParticles.push(pp);
+    for (const vv of b.visual) visual.push(vv);
+    for (const sp of b.originSprings) originSprings.push(sp);
+    for (const sp of b.outlineSprings) outlineSprings.push(sp);
+    for (const bh of b.repulsionBehaviors) repulsionBehaviors.push(bh);
+  }
+  originActivations = new Array(originSprings.length).fill(0);
+}
+
+/* replace ONE slot's glyph: remove its old chains from the physics, build the
+ * new ones, seed them from the old digit's own point cloud (nearest neighbour
+ * = the morph), then re-derive the flat arrays. Everything else is untouched. */
+function rebuildClockSlot(i, newChar) {
+  const slot = clockSlots[i];
+  const old = slot.built;
+  const led = isLedFont();
+  const font = led ? null : blobFont && blobFont.font;
+  const contours = led
+    ? extractLedContours(newChar, clockLayout.size, CONFIG.segLen, clockLayout.xs[i], clockLayout.dy, 1e9)
+    : extractContoursAt(font, newChar, clockLayout.size, CONFIG.segLen, clockLayout.xs[i], clockLayout.dy);
+  /* take the old chains out of the physics — springs and behaviors first
+   * (removeParticle() leaves them attached otherwise) */
+  for (const s of old.outlineSprings) physics.removeSpring(s);
+  for (const s of old.originSprings) physics.removeSpring(s);
+  for (const b of old.repulsionBehaviors) physics.removeBehavior(b);
+  for (const pp of old.pathParticles) for (const p of pp) physics.removeParticle(p);
+  /* build the new chains (adds the new particles / springs / behaviors) */
+  const built = buildLetterPhysics(physics, contours, CONFIG);
+  /* the new slot's ORIGIN springs must match the membership of the others:
+   * buildLetterPhysics does not add them (the full-rebuild path adds them
+   * all in applyAttractToOrigin) — here the other slots are already in, so
+   * the new ones enter now. Without this the digit keeps its chains but is
+   * never pulled: the "not attracted to the new anchors" bug. */
+  if (originSpringsOn) for (const s of built.originSprings) physics.addSpring(s);
+  /* carry: every new particle starts at the OLD cloud point nearest to its
+   * own anchor — the points morph from where the old digit actually was.
+   * Points are consumed ONE BY ONE (unused preferred) so two new particles
+   * never land on the same old point — coincident seeds give the repulsion a
+   * one-frame explosion kick; reuse only once the old cloud is exhausted
+   * (the new digit has more points than the old one). */
+  const pool = [];
+  for (const pp of old.pathParticles) for (const p of pp) pool.push({ x: p.x, y: p.y, used: false });
+  const nearest = (ax, ay, onlyUnused) => {
+    let best = null,
+      bd = Infinity;
+    for (const q of pool) {
+      if (onlyUnused && q.used) continue;
+      const dx = q.x - ax,
+        dy = q.y - ay;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bd) {
+        bd = d2;
+        best = q;
+      }
+    }
+    return best;
+  };
+  if (pool.length) {
+    for (let c = 0; c < built.pathParticles.length; c++) {
+      const pp = built.pathParticles[c];
+      const vv = built.visual[c];
+      for (let j = 0; j < pp.length; j++) {
+        const ax = pp[j].x,
+          ay = pp[j].y; // built at the anchors (buildLetterPhysics reset them)
+        const best = nearest(ax, ay, true) || nearest(ax, ay, false);
+        best.used = true;
+        pp[j].set(best);
+        pp[j].clearVelocity();
+        pp[j].clearForce();
+        vv[j].x = best.x;
+        vv[j].y = best.y;
+      }
+    }
+  }
+  slot.char = newChar;
+  slot.built = built;
+  slot.id = ++clockSlotSerial; // a fresh id marks this slot as rebuilt
+  flattenClockSlots();
+}
+
 /* swap the active text and rebuild the physics from its outlines */
 function setInputText(text) {
   activeInput = text;
@@ -1357,26 +1763,88 @@ function centerContours(contours) {
   }
 }
 
-/* called every frame while the mode is on: rebuild when the minute changes */
+/* called every frame while the mode is on: rebuild when the minute changes.
+ * With the fixed slots up, ONLY the digits whose character changed are
+ * rebuilt — no global re-seed, the rest of the clock is not touched. */
 function checkClock() {
   if (!flags.clockOn) return;
   const s = clockString();
-  if (s !== lastClockKey) {
-    lastClockKey = s;
-    setInputText(s);
+  if (s === lastClockKey) return;
+  lastClockKey = s;
+  if (clockSlots && s.length === clockSlots.length) {
+    activeInput = s;
+    let changed = 0;
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] !== clockSlots[i].char) {
+        rebuildClockSlot(i, s[i]);
+        changed++;
+      }
+    }
+    if (changed) return; // the unchanged digits keep their tangles untouched
   }
+  setInputText(s); // full rebuild (first build, font switch, different shape)
 }
 
-/* web addition: scan mode — a virtual cursor sweeps left -> right across the
- * stage in scanPeriodMs; the enzyme lens rides it, so the letters re-form as
- * the beam passes (key 's'; ?scan). Mouse input is ignored while on. */
+/* web addition: scan mode — a virtual pointer sweeps across the stage in
+ * scanPeriodMs and the enzyme zone rides it, so the letters re-form as the
+ * zone passes (key 's'; ?scan). Mouse input is ignored while on.
+ *   CONFIG.scanShape   'disk' = the round lens; 'bar' = a straight beam,
+ *                      spanning the stage perpendicular to the sweep axis
+ *                      (invisible unless the 'r' indicator is on)
+ *   CONFIG.scanAxis    'x' sweeps left->right; 'y' sweeps top->bottom
+ *   CONFIG.scanPattern 'sweep' = one direction (with an offstage margin at
+ *                      both ends); 'pingpong' = sinusoidal back & forth
+ *                      (a full left-right-left cycle per period, dwelling
+ *                      naturally at the two ends — no jump); 'bounce' = a
+ *                      DVD-logo ball: both axes reflect off the margins,
+ *                      |vx| = |vy| (x crosses the stage and back per period);
+ *                      'rotate' = the bar SPINS about the stage centre (one
+ *                      full turn per period; returns {angle}), or the disk
+ *                      ORBITS the centre */
+function scanPointer(nowMs) {
+  const period = Math.max(200, CONFIG.scanPeriodMs);
+  const frac = (nowMs % period) / period;
+  /* the zone's nominal edge (weight ≈ 0.5): half the bar, or the lens core */
+  const zoneHalf =
+    CONFIG.scanShape === 'bar'
+      ? Math.max(1.0, CONFIG.scanBarWidth) / 2
+      : Math.max(1.0, CONFIG.lensRadius) * CONFIG.lensMidpointFrac;
+  /* margin: the whole zone (edge + soft shoulders) stays offstage at both ends */
+  const margin = zoneHalf + 4 * Math.max(0.5, CONFIG.lensSoftness);
+  const span = CONFIG.scanAxis === 'y' ? CONFIG.H : CONFIG.W;
+  if (CONFIG.scanPattern === 'bounce') {
+    /* bouncing ball: each axis is a triangle wave over its own
+     * [−margin, span+margin] range — the exact solution of a reflection, so
+     * the ball keeps its speed and never jumps; |vx| = |vy| = 45° DVD logo */
+    const rx = CONFIG.W + 2 * margin;
+    const ry = CONFIG.H + 2 * margin;
+    const tri = (u) => 1 - Math.abs(2 * (u - Math.floor(u)) - 1); // 0..1..0
+    const px = period; // x: one full left-right-left per period
+    const py = (ry * px) / rx; // matched speed → same px/s on both axes
+    return { x: -margin + rx * tri(nowMs / px), y: -margin + ry * tri(nowMs / py) };
+  }
+  if (CONFIG.scanPattern === 'rotate') {
+    const th = Math.PI * 2 * frac;
+    if (CONFIG.scanShape === 'bar') return { x: CONFIG.W / 2, y: CONFIG.H / 2, angle: th }; // the beam spins about the centre
+    const r = Math.max(1, Math.min(CONFIG.W, CONFIG.H) / 2 - zoneHalf); // the disk orbits the centre
+    return { x: CONFIG.W / 2 + r * Math.cos(th), y: CONFIG.H / 2 + r * Math.sin(th) };
+  }
+  let p;
+  if (CONFIG.scanPattern === 'pingpong') {
+    const amp = span / 2 + margin;
+    p = span / 2 - amp * Math.cos(Math.PI * 2 * frac); // starts at the low end, dwells at both ends
+  } else {
+    p = -margin + (span + 2 * margin) * frac; // one-directional sweep, offstage margin at both ends
+  }
+  return CONFIG.scanAxis === 'y' ? { x: CONFIG.W / 2, y: p } : { x: p, y: CONFIG.H / 2 };
+}
+
 function updateScan() {
   if (!flags.scanMode) return;
-  const period = Math.max(200, CONFIG.scanPeriodMs);
-  const frac = (Date.now() % period) / period;
-  const R = Math.max(1.0, CONFIG.lensRadius);
-  pointer.x = -R + (CONFIG.W + 2 * R) * frac;
-  pointer.y = CONFIG.H / 2;
+  const pos = scanPointer(Date.now());
+  pointer.x = pos.x;
+  pointer.y = pos.y;
+  if (pos.angle !== undefined) pointer.angle = pos.angle; // the spinning beam (bar · rotate)
 }
 
 /* key 'k': on = time on stage; off = back to the configured text */
@@ -1402,6 +1870,15 @@ function cycleFont() {
     const e = CONFIG.fonts && CONFIG.fonts[i];
     if ((e && e.type === 'led') || (blobFonts[i] && blobFonts[i].font)) break;
   }
+  setFontIndex(i);
+}
+
+/* select a font by index (shared by 't' cycling and the parameter panel) —
+ * rebuilds the physics from the new outlines and clears the trail */
+function setFontIndex(i) {
+  const e = CONFIG.fonts && CONFIG.fonts[i];
+  if (!e) return;
+  if (e.type !== 'led' && !(blobFonts[i] && blobFonts[i].font)) return;
   CONFIG.fontIndex = i;
   blobFont = blobFonts[i] || blobFont; // keep a font for cycling away from LED
   initPhysics();
@@ -1472,15 +1949,18 @@ function hudText() {
       yn(flags.showLensRing),
     '1      outline springs       ' + yn(flags.renderOutlineSprings),
     '2      origin springs        ' + yn(flags.renderOriginSprings),
+    '3      anchors (scaffold)    ' + yn(flags.showAnchors),
     '[ ]    trail fade            ' + flags.trailFade,
     ', .    visual lerp           ' + flags.visualLerp.toFixed(2),
     'b      beads                 ' + yn(flags.showBeads),
     'k      clock mode            ' + yn(flags.clockOn),
-    's      scan mode             ' + yn(flags.scanMode),
+    's      scan mode             ' +
+      (flags.scanMode ? 'ON (' + CONFIG.scanShape + ' ' + CONFIG.scanAxis + ' ' + CONFIG.scanPattern + ')' : 'OFF'),
     'g      grayscale             ' + yn(flags.grayMode),
     'p      mode                  ' + (CONFIG.modeName || 'keep'),
     't      font                  ' +
       (CONFIG.fonts && CONFIG.fonts[CONFIG.fontIndex] ? CONFIG.fonts[CONFIG.fontIndex].name : 'n/a'),
+    'o      parameter panel',
     'f      fullscreen',
     'h      hide this panel',
     '',
@@ -1499,6 +1979,96 @@ function showFatal(msg) {
     fatalEl.textContent = msg;
     fatalEl.style.display = 'grid';
   }
+}
+
+/* --- control surface for the parameter panel (js/panel.js) ---------------- */
+/* The panel is pure UI: ALL side-effect knowledge lives HERE, next to the
+ * physics it drives. `apply(path, value)` assigns the value (a CONFIG key or
+ * 'flags.key') and performs whatever the change needs — live instance
+ * updates, a full physics rebuild, a canvas resize — then resyncs the UI. */
+if (typeof window !== 'undefined') {
+  window.BC_CTL = {
+    CONFIG: CONFIG,
+    flags: flags,
+    text: () => activeInput,
+    fonts: () => (CONFIG.fonts || []).map((f) => f.name),
+    modeNames: () => (window.BC_MODES || []).map((m) => m.name),
+    modeName: () => CONFIG.modeName || 'keep',
+    setMode(name) {
+      return applyMode(name, true);
+    },
+    cycleMode: cycleMode,
+    /* central setter — used by every panel control */
+    apply(path, value) {
+      if (path === 'flags.clockOn') {
+        if (!!value !== flags.clockOn) toggleClock(); // behaves like key 'k'
+      } else if (path === 'input') {
+        CONFIG.input = String(value);
+        if (flags.clockOn) flags.clockOn = false; // typing text exits clock mode
+        setInputText(CONFIG.input);
+      } else if (path === 'fontIndex') {
+        setFontIndex(value | 0);
+      } else if (path.indexOf('flags.') === 0) {
+        flags[path.slice(6)] = value;
+        if (path === 'flags.showCursor') applyCursor();
+      } else {
+        CONFIG[path] = value;
+        if (path === 'drag') {
+          if (physics) physics.setDrag(CONFIG.drag); // read per frame — live
+        } else if (path === 'repulsionRadius') {
+          for (const b of repulsionBehaviors) b.setRadius(CONFIG.repulsionRadius);
+          reinstallFastSolver(); // the grid cell size follows the radius
+        } else if (path === 'repulsionJitter') {
+          for (const b of repulsionBehaviors) if (b.setJitter) b.setJitter(CONFIG.repulsionJitter);
+        } else if (path === 'fastSolver') {
+          rebuildStage();
+        } else if (path === 'W' || path === 'H') {
+          resizeStage(CONFIG.W, CONFIG.H);
+        } else if (path === 'textSize' || path === 'offsetX' || path === 'offsetY' || path === 'segLen') {
+          rebuildStage();
+        }
+      }
+      CONFIG.modeName = 'custom'; // any hand edit = a custom parameter set
+      updateHud();
+      if (window.BCPanel) window.BCPanel.sync();
+    },
+    /* one-shot application (panel Load): assign everything, rebuild ONCE */
+    applyAll(values, flagValues) {
+      if (values) for (const k in values) if (k in CONFIG && typeof CONFIG[k] !== 'object') CONFIG[k] = values[k];
+      if (flagValues) for (const k in flagValues) if (k in flags) flags[k] = flagValues[k];
+      if (CONFIG.fonts && blobFonts.length) blobFont = blobFonts[CONFIG.fontIndex] || blobFont;
+      if (physics) physics.setDrag(CONFIG.drag);
+      for (const b of repulsionBehaviors) {
+        if (b.setRadius) b.setRadius(CONFIG.repulsionRadius);
+        if (b.setJitter) b.setJitter(CONFIG.repulsionJitter);
+      }
+      // text follows the loaded flags: clock on -> the time, else CONFIG.input
+      activeInput = flags.clockOn ? (lastClockKey = clockString()) : CONFIG.input;
+      if (cnvEl && (cnvEl.width !== CONFIG.W || cnvEl.height !== CONFIG.H)) resizeStage(CONFIG.W, CONFIG.H);
+      else rebuildStage();
+      CONFIG.modeName = 'custom';
+      applyCursor();
+      updateHud();
+      if (window.BCPanel) window.BCPanel.sync();
+    },
+    /* panel Reset: back to the page-load baseline (URL params included);
+     * the font choice survives (it is taste, not tuning) */
+    resetToBaseline() {
+      if (!CONFIG_BASE) return;
+      const keepFont = CONFIG.fontIndex;
+      Object.assign(CONFIG, CONFIG_BASE);
+      CONFIG.fontIndex = keepFont;
+      CONFIG.modeName = 'keep'; // the page-load baseline IS the keep-mode set
+      blobFont = blobFonts[CONFIG.fontIndex] || blobFont;
+      if (FLAGS_BASE) Object.assign(flags, FLAGS_BASE);
+      activeInput = flags.clockOn ? (lastClockKey = clockString()) : CONFIG.input;
+      if (cnvEl && (cnvEl.width !== CONFIG.W || cnvEl.height !== CONFIG.H)) resizeStage(CONFIG.W, CONFIG.H);
+      else rebuildStage();
+      applyCursor();
+      updateHud();
+      if (window.BCPanel) window.BCPanel.sync();
+    },
+  };
 }
 
 /* --- debug / automation hook (used by the test harness; handy in the console) */
@@ -1532,6 +2102,35 @@ if (typeof window !== 'undefined') {
       pointer.x = x;
       pointer.y = y;
     },
+    zoneWeightAt,
+    scanPointer,
+    activations() {
+      return originActivations.slice();
+    },
+    /* the live VerletPhysics2D (test/debug: inspecting or freezing motion) */
+    physics() {
+      return physics;
+    },
+    /* per-character clock slots (web addition): char, rebuild id and size of
+     * every slot — an id that survives a minute flip = slot untouched */
+    clockInfo() {
+      if (!clockSlots) return null;
+      return {
+        slots: clockSlots.map((s) => ({
+          char: s.char,
+          id: s.id,
+          contours: s.built ? s.built.pathParticles.length : 0,
+          particles: s.built ? s.built.pathParticles.reduce((a, pp) => a + pp.length, 0) : 0,
+        })),
+        layout: clockLayout ? { size: clockLayout.size, dy: clockLayout.dy, xs: clockLayout.xs.slice() } : null,
+      };
+    },
+    anchors() {
+      return originalPathParticles ? originalPathParticles.map((c) => c.map((p) => ({ x: p.x, y: p.y }))) : [];
+    },
+    particles() {
+      return pathParticles ? pathParticles.map((c) => c.map((p) => ({ x: p.x, y: p.y }))) : [];
+    },
     /* mean |current - anchor| over all particles, optionally only near (x,y,r) */
     meanOffset(x, y, r) {
       if (!pathParticles) return 0;
@@ -1560,10 +2159,14 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     CONFIG,
     flags,
+    pointer,
     clampTo,
     mapRange,
     descendingSigmoid,
+    plateauWeight,
     clockEnvelope,
+    zoneWeightAt,
+    scanPointer,
     flattenCommands,
     anchorCaptureWeight,
     resampleClosed,
